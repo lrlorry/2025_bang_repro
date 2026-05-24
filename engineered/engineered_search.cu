@@ -419,7 +419,7 @@ void search_bang_engineered(
   {
     std::vector<int> seed(numQ * R);
     for (int q = 0; q < numQ; q++)
-      for (int r = 0; r < R; r++) seed[q * R + r] = graph.adj[0 * R + r];
+      for (int r = 0; r < R; r++) seed[q * R + r] = graph.adj[(long long)graph.medoid * R + r];
     CUDA_CHECK(cudaMemcpyAsync(d_nb_h2d, seed.data(), numQ * R * sizeof(int),
                                cudaMemcpyHostToDevice, streamChildren));
   }

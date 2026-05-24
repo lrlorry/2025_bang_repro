@@ -1,5 +1,6 @@
 #include "common/cuda_utils.cuh"
 #include "engineered/config.cuh"
+#include "engineered/engineered_build.cuh"
 #include "engineered/engineered_search.cuh"
 #include "plain/plain_search.cuh"
 
@@ -8,24 +9,6 @@
 #include <vector>
 #include <algorithm>
 #include <numeric>
-
-// 与 plain_main.cu 共用相同的数据生成和 recall 计算逻辑
-// 只替换搜索函数为 search_bang_engineered
-
-static bang_repro::plain::HostGraph make_random_graph(
-    const std::vector<float>& vecs, int N, int dim, int R, std::mt19937& rng)
-{
-  bang_repro::plain::HostGraph g;
-  g.N = N; g.R = R; g.vecs = vecs; g.adj.assign(N * R, -1);
-  std::vector<int> pool(N); std::iota(pool.begin(), pool.end(), 0);
-  for (int i = 0; i < N; i++) {
-    std::shuffle(pool.begin(), pool.end(), rng);
-    int k = 0;
-    for (int j = 0; j < N && k < R; j++)
-      if (pool[j] != i) g.adj[i * R + k++] = pool[j];
-  }
-  return g;
-}
 
 static void make_random_pq(
     const std::vector<float>& vecs, int N, int dim, int M, int chunk_dim,
@@ -79,16 +62,18 @@ int main()
 
   const int N = kN, dim = kDim, numQ = kNumQ, R = kR, M = kM;
 
-  std::printf("BANG engineered reproduction\n");
+  std::printf("BANG engineered reproduction (Vamana build + GPU PQ search)\n");
   std::printf("N=%d, dim=%d, numQ=%d, R=%d, M=%d, L=%d, topK=%d\n", N, dim, numQ, R, M, kL, kTopK);
-  std::printf("Optimizations: transposed PQ table, 8-thread PQ dist, shared-mem merge, 4 streams, OpenMP\n\n");
+  std::printf("Build: OpenMP parallel greedy_search + robust_prune\n");
+  std::printf("Search: transposed PQ table, 8-thread PQ dist, shared-mem merge, 4 streams, OpenMP\n\n");
 
   std::vector<float> h_dataset(N * dim), h_queries(numQ * dim);
   for (float& x : h_dataset) x = normal(rng);
   for (float& x : h_queries) x = normal(rng);
 
-  std::printf("Building random graph (host RAM)...\n");
-  auto graph = make_random_graph(h_dataset, N, dim, R, rng);
+  std::printf("Building Vamana graph (GPU batch L2 + OpenMP prune)...\n");
+  auto graph = bang_repro::engineered::build_vamana_engineered(
+      h_dataset, N, dim, R, /*alpha=*/1.2f, /*L_build=*/64);
 
   std::printf("Building PQ (GPU HBM)...\n");
   std::vector<uint8_t> h_codes;

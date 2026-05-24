@@ -12,6 +12,7 @@ namespace bang_repro::plain {
 // 这里拆分为两个独立数组，比 BANG 原版更易读。
 struct HostGraph {
   int N, R;
+  int medoid = 0;           // Vamana entry point (set by build; 0 = unset)
   std::vector<float> vecs;  // [N * dim]  full precision vectors
   std::vector<int>   adj;   // [N * R]    neighbor ids  (-1 = empty slot)
 };

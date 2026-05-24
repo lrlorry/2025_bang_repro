@@ -1,5 +1,6 @@
 #include "common/cuda_utils.cuh"
 #include "plain/config.cuh"
+#include "plain/plain_build.cuh"
 #include "plain/plain_search.cuh"
 
 #include <cstdio>
@@ -8,32 +9,6 @@
 #include <algorithm>
 #include <numeric>
 #include <cmath>
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Synthetic data generation
-// ─────────────────────────────────────────────────────────────────────────────
-
-// 生成 random kNN 图（brute-force 对小 N 可行，大 N 用随机近似）
-// plain 版用随机 R 近邻（不保证 kNN 质量，只用于测试搜索机制）
-static bang_repro::plain::HostGraph make_random_graph(
-    const std::vector<float>& vecs, int N, int dim, int R, std::mt19937& rng)
-{
-  bang_repro::plain::HostGraph g;
-  g.N = N; g.R = R;
-  g.vecs = vecs;
-  g.adj.assign(N * R, -1);
-
-  // 对每个节点，随机选 R 个不同邻居（模拟 graph，不是真 kNN）
-  std::vector<int> pool(N);
-  std::iota(pool.begin(), pool.end(), 0);
-  for (int i = 0; i < N; i++) {
-    std::shuffle(pool.begin(), pool.end(), rng);
-    int k = 0;
-    for (int j = 0; j < N && k < R; j++)
-      if (pool[j] != i) g.adj[i * R + k++] = pool[j];
-  }
-  return g;
-}
 
 // 生成 random PQ（随机 centroid，用于测试搜索机制，不保证 PQ 质量）
 static void make_random_pq(
@@ -101,7 +76,7 @@ int main()
   const int chunk_dim = kChunkDim;
   const int topK = kTopK;
 
-  std::printf("BANG plain reproduction\n");
+  std::printf("BANG plain reproduction (Vamana build + GPU PQ search)\n");
   std::printf("N=%d, dim=%d, numQ=%d, R=%d, M=%d, L=%d, topK=%d\n\n",
               N, dim, numQ, R, M, kL, topK);
 
@@ -110,9 +85,9 @@ int main()
   for (float& x : h_dataset) x = normal(rng);
   for (float& x : h_queries) x = normal(rng);
 
-  // 构建 host graph（CPU RAM）
-  std::printf("Building random graph (host RAM)...\n");
-  HostGraph graph = make_random_graph(h_dataset, N, dim, R, rng);
+  // 构建 Vamana 图（CPU Vamana，对应 BANG bang_preprocess.py）
+  std::printf("Building Vamana graph (host RAM, plain CPU)...\n");
+  HostGraph graph = build_vamana_plain(h_dataset, N, dim, R, /*alpha=*/1.2f, /*L_build=*/64);
 
   // 构建 PQ（GPU HBM）
   std::printf("Building PQ (GPU HBM)...\n");
@@ -168,8 +143,8 @@ int main()
   }
   std::printf("\nRecall@%d: %.3f  (%d / %d)\n", topK,
               (float)hit / total, hit, total);
-  std::printf("\nNote: random graph + random PQ → low recall expected.\n");
-  std::printf("      Run with real DiskANN index for meaningful recall numbers.\n");
+  std::printf("\nNote: Vamana graph + random PQ centroids.\n");
+  std::printf("      Recall improves significantly with trained PQ codebooks.\n");
 
   // 清理
   cudaFree(pq.d_codes); cudaFree(pq.d_table);

@@ -361,7 +361,7 @@ void search_bang_plain(
     std::vector<int> seed_nb(numQ * R);
     for (int q = 0; q < numQ; q++)
       for (int r = 0; r < R; r++)
-        seed_nb[q * R + r] = graph.adj[0 * R + r];  // node 0 的邻居作为初始候选
+        seed_nb[q * R + r] = graph.adj[(long long)graph.medoid * R + r];
     CUDA_CHECK(cudaMemcpy(d_nb_h2d, seed_nb.data(), numQ * R * sizeof(int), cudaMemcpyHostToDevice));
   }
 
