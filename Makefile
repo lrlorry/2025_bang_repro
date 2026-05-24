@@ -1,13 +1,17 @@
 BUILD_DIR ?= build
 
-.PHONY: all clean
+.PHONY: all plain engineered clean
 
-all: $(BUILD_DIR)/bang_plain
+all: plain engineered
 
-$(BUILD_DIR)/bang_plain: CMakeLists.txt plain/plain_search.cu plain/plain_main.cu
+plain: $(BUILD_DIR)/bang_plain
+
+engineered: $(BUILD_DIR)/bang_engineered
+
+$(BUILD_DIR)/bang_plain $(BUILD_DIR)/bang_engineered: CMakeLists.txt
 	mkdir -p $(BUILD_DIR)
 	cd $(BUILD_DIR) && cmake .. -DCMAKE_BUILD_TYPE=Release
-	cmake --build $(BUILD_DIR) --target bang_plain -- -j$(shell nproc)
+	cmake --build $(BUILD_DIR) -- -j$(shell nproc)
 
 clean:
 	rm -rf $(BUILD_DIR)

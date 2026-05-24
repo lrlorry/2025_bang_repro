@@ -5,10 +5,12 @@
 ## 结构
 
 ```
-plain/          BANG plain CUDA 实现（host graph + GPU PQ，CPU-GPU pipeline）
-common/         公共头文件（CUDA_CHECK 等）
-report/         源码审计报告
-CMakeLists.txt  构建
+plain/              BANG reference 实现（顺序执行，可读性优先）
+engineered/         BANG 工程优化实现（4 streams / 8-thread PQ / shared-mem merge / OpenMP）
+common/             公共头文件
+report/             源码审计与分析报告
+CMakeLists.txt
+bang_cagra_report.md  BANG + CAGRA 综合技术报告
 ```
 
 ## 构建
@@ -17,34 +19,40 @@ CMakeLists.txt  构建
 mkdir build && cd build
 cmake ..
 make -j$(nproc)
-./bang_plain
+./bang_plain        # reference 版
+./bang_engineered   # 工程优化版
 ```
 
-需要：CUDA 12+，cmake 3.18+，支持 CUDA 的 GPU。
+需要：CUDA 12+，cmake 3.18+，OpenMP，支持 CUDA 的 GPU。
 
-## plain 实现说明
+## plain vs engineered 对比
 
-`plain/` 是 BANG 核心算法的 reference 实现，对应 `BANG_Base/bang_search.cu` 的主路径：
+| 功能 | plain | engineered | 对应 BANG 源码 |
+|---|---|---|---|
+| PQ table layout | 原始 [M×256×dim] | **转置 [M×dim×256]** | `pqTable_T`（cu:273）|
+| PQ distance | 1 thread/neighbor | **8-thread + warp reduce** | `THREADS_PER_NEIGHBOR=8`（cu:184）|
+| Worklist merge | serial insert | **shared-mem 2-way merge** | `compute_BestLSets_par_merge`（cu:439）|
+| CPU-GPU overlap | 无（顺序同步）| **4 CUDA streams** | `streamParent/Children/FP/Kernels` |
+| CPU graph fetch | 单线程 | **OpenMP 并行** | `numCPUthreads=64`（cu:413）|
+| FP vector 预取 | rerank 前同步拉取 | **search loop 内异步 H2D** | `streamFPTransfers` |
 
-| BANG 原版 | plain 等价 |
-|---|---|
-| `populate_pqDist_par` | `populate_pq_dist_table_kernel` |
-| `neighbor_filtering_new` | `bloom_filter_kernel` |
-| `compute_neighborDist_par` | `pq_distance_kernel` |
-| `compute_BestLSets_par_sort_msort` + `compute_BestLSets_par_merge` | `update_worklist_kernel`（串行）|
-| `compute_parent2`（eager prefetch）| `select_next_parent_kernel` |
-| `compute_L2Dist` + `compute_NearestNeighbours` | `exact_rerank_kernel` |
+两者逻辑完全等价，搜索结果一致。
 
-plain 版与 BANG 原版的差异（性能，逻辑等价）：
-- **无 CUDA streams**：原版用 4 streams overlap CPU/GPU，plain 版顺序同步执行
-- **无 OpenMP**：原版用 `numCPUthreads=64` 并行 fetch graph，plain 版单线程
-- **串行 worklist**：原版用 parallel merge sort + shared memory merge，plain 版 serial insert
-- **无异步 FP prefetch**：原版 search loop 内异步 H2D candidate vectors，plain 版 rerank 前同步拉取
+## Kernel 对照表
 
-## 技术报告
+| kernel | plain | engineered | BANG 原版 |
+|---|---|---|---|
+| PQ dist table | `populate_pq_dist_table_kernel` | `populate_pq_dist_table_T_kernel` | `populate_pqDist_par` |
+| Bloom filter | `bloom_filter_kernel` | `bloom_filter_eng_kernel` | `neighbor_filtering_new` |
+| PQ distance | `pq_distance_kernel` | `pq_distance_8thread_kernel` | `compute_neighborDist_par` |
+| Worklist update | `update_worklist_kernel` | `merge_worklist_kernel` | sort_msort + merge |
+| Parent select | `select_next_parent_kernel` | `select_parent_eng_kernel` | `compute_parent2` |
+| Exact rerank | `exact_rerank_kernel` | `exact_rerank_eng_kernel` | `compute_L2Dist` + `compute_NearestNeighbours` |
+
+## 报告
 
 - `report/bang_audit_report.md` — 源码 findings（含 LOAD-01 类型安全 bug）
 - `report/bang_source_map.md` — 数据结构 + 调用链 + kernel 索引
 - `report/bang_vs_cagra.md` — BANG vs CAGRA 深度对比
-- `report/bang_resource_plan.md` — 各规模（SIFT10K ~ SIFT1B）资源估算
-- `bang_cagra_final_technical_report.md` — 综合技术报告
+- `report/bang_resource_plan.md` — 各规模资源估算
+- `bang_cagra_report.md` — 综合技术报告
