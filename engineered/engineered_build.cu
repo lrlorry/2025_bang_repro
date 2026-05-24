@@ -70,8 +70,6 @@ static std::vector<int> robust_prune_eng(
     int p, std::vector<std::pair<float,int>>& cands,
     const float* vecs, int dim, int R, float alpha)
 {
-  const float* pv = vecs + (long long)p * dim;
-  (void)pv;
   std::vector<int> result;
   result.reserve(R);
   for (auto& [dp_c, c] : cands) {

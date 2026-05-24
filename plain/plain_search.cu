@@ -341,11 +341,10 @@ void search_bang_plain(
   {
     std::vector<int>   init_ids(numQ * kL, -1);
     std::vector<float> init_dist(numQ * kL, 1e30f);
-    std::vector<bool>  init_exp(numQ * kL, false);
     CUDA_CHECK(cudaMemcpy(d_wl_ids,  init_ids.data(),  numQ * kL * sizeof(int),   cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_wl_dist, init_dist.data(), numQ * kL * sizeof(float), cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_wl_exp,  init_exp.data(),  numQ * kL * sizeof(bool),  cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemset(d_bloom, 0, (long long)numQ * kBF * sizeof(bool)));
+    CUDA_CHECK(cudaMemset(d_wl_exp,  0, (long long)numQ * kL * sizeof(bool)));
+    CUDA_CHECK(cudaMemset(d_bloom,   0, (long long)numQ * kBF * sizeof(bool)));
   }
 
   // ── Stage 1: PQ distance table（populate_pqDist_par 等价）─────────────────

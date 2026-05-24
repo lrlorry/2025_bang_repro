@@ -403,11 +403,10 @@ void search_bang_engineered(
   {
     std::vector<int>   ii(numQ * kL, -1);
     std::vector<float> id(numQ * kL, 1e30f);
-    std::vector<bool>  ie(numQ * kL, false);
     CUDA_CHECK(cudaMemcpy(d_wl_ids,  ii.data(), numQ * kL * sizeof(int),   cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_wl_dist, id.data(), numQ * kL * sizeof(float), cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_wl_exp,  ie.data(), numQ * kL * sizeof(bool),  cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemset(d_bloom, 0, (long long)numQ * kBF * sizeof(bool)));
+    CUDA_CHECK(cudaMemset(d_wl_exp,  0, (long long)numQ * kL * sizeof(bool)));
+    CUDA_CHECK(cudaMemset(d_bloom,   0, (long long)numQ * kBF * sizeof(bool)));
   }
 
   // ── Stage 1: PQ distance table（转置版）──────────────────────────────────
