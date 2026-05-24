@@ -1,41 +1,33 @@
-cmake_minimum_required(VERSION 3.18)
-project(bang_repro LANGUAGES CXX CUDA)
+cmake_minimum_required(VERSION 3.3)
+project(bang_repro)
 
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CUDA_STANDARD 17)
-
-find_package(CUDAToolkit REQUIRED)
+# 兼容 cmake 3.3（旧版 FindCUDA 模块，不依赖 CUDAToolkit / LANGUAGES CUDA）
+find_package(CUDA REQUIRED)
 find_package(OpenMP REQUIRED)
 
-include_directories(${CMAKE_SOURCE_DIR})
+include_directories(${CMAKE_SOURCE_DIR} ${CUDA_INCLUDE_DIRS})
+
+# 公共 NVCC 编译选项
+set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS}
+    -O3 --expt-relaxed-constexpr -std=c++17)
 
 # ── plain: reference 实现 ────────────────────────────────────────────────────
 # Vamana 图构建（CPU 串行）+ GPU PQ 搜索（顺序执行，无流重叠，串行 worklist）
-add_executable(bang_plain
+cuda_add_executable(bang_plain
   plain/plain_build.cu
   plain/plain_search.cu
   plain/plain_main.cu
 )
-target_compile_options(bang_plain PRIVATE
-  $<$<COMPILE_LANGUAGE:CUDA>:-O3 --expt-relaxed-constexpr>
-)
-target_link_libraries(bang_plain PRIVATE CUDA::cudart)
+target_link_libraries(bang_plain ${CUDA_LIBRARIES})
 
 # ── engineered: 工程优化版 ───────────────────────────────────────────────────
-# Build:  GPU batch L2 距离 + OpenMP parallel RobustPrune
-# Search: 1. 转置 PQ table（改善 centroid access coalescing）
-#         2. 8-thread PQ distance + warp reduce（kTPNbr=8）
-#         3. Shared-memory parallel worklist merge（2*kL 线程）
-#         4. 4 CUDA streams（parent D2H / children H2D / FP H2D / kernels 重叠）
-#         5. OpenMP CPU graph fetch
-add_executable(bang_engineered
-  plain/plain_search.cu           # 提供 HostGraph/DevicePQ 定义
+# Build:  OpenMP parallel greedy_search + robust_prune
+# Search: 转置 PQ table / 8-thread PQ dist / shared-mem merge / 4 streams / OpenMP
+cuda_add_executable(bang_engineered
+  plain/plain_search.cu
   engineered/engineered_build.cu
   engineered/engineered_search.cu
   engineered/engineered_main.cu
+  OPTIONS -Xcompiler=-fopenmp
 )
-target_compile_options(bang_engineered PRIVATE
-  $<$<COMPILE_LANGUAGE:CUDA>:-O3 --expt-relaxed-constexpr -Xcompiler -fopenmp>
-  $<$<COMPILE_LANGUAGE:CXX>:-fopenmp>
-)
-target_link_libraries(bang_engineered PRIVATE CUDA::cudart OpenMP::OpenMP_CXX)
+target_link_libraries(bang_engineered ${CUDA_LIBRARIES} -fopenmp)
