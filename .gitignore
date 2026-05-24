@@ -1,5 +1,6 @@
 # Build outputs
 bang_build/
+build/
 *.o
 *.a
 
@@ -18,6 +19,10 @@ sift1m_data/
 # Results and figures (generated, commit selectively)
 results/*.log
 results/*.csv
+results/*.txt
+figures/*.png
+figures/*.pdf
+data/
 
 # Python
 __pycache__/
