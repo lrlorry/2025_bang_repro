@@ -1,0 +1,29 @@
+# Build outputs
+bang_build/
+*.o
+*.a
+
+# BANG binary (if built locally)
+bang_search
+
+# Data files (large, not in repo)
+*.bin
+*.fvecs
+*.ivecs
+*.bvecs
+*.npy
+sift10kfiles/sift*
+sift1m_data/
+
+# Results and figures (generated, commit selectively)
+results/*.log
+results/*.csv
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# macOS
+.DS_Store
