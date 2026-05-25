@@ -65,16 +65,30 @@ def dump_diskann_graph(path, n_nodes=5):
     sz = os.path.getsize(path)
     print(f"\n[diskann .graph] file size: {sz} bytes ({sz/1e6:.1f} MB)", flush=True)
     with open(path, "rb") as f:
-        raw16 = f.read(16)
-        print(f"[diskann .graph] first 16 bytes hex: {raw16.hex()}", flush=True)
-        index_size, = struct.unpack("Q", raw16[:8])
-        max_degree,  = struct.unpack("I", raw16[8:12])
-        entry_point, = struct.unpack("I", raw16[12:16])
-        print(f"[diskann .graph] index_size={index_size} max_degree={max_degree} entry_point={entry_point}", flush=True)
+        raw24 = f.read(24)
+        print(f"[diskann .graph] first 24 bytes hex: {raw24.hex()}", flush=True)
+        if len(raw24) < 24:
+            print("[diskann .graph] file too small for DiskANN .graph header", flush=True)
+            return
+        index_size, max_degree, entry_point, num_frozen = struct.unpack("<QIIQ", raw24)
+        print(
+            f"[diskann .graph] index_size={index_size} max_degree={max_degree} "
+            f"entry_point={entry_point} frozen={num_frozen}",
+            flush=True,
+        )
+        if index_size != sz:
+            print("[diskann .graph] warning: index_size != file size", flush=True)
         for i in range(n_nodes):
             d_buf = f.read(4)
             if not d_buf: break
             deg = struct.unpack("I", d_buf)[0]
+            if deg > max_degree:
+                print(
+                    f"[diskann .graph] node {i}: impossible degree={deg} > max_degree={max_degree}; "
+                    "header/format is probably wrong",
+                    flush=True,
+                )
+                break
             nbrs = list(struct.unpack(f"{deg}I", f.read(4*deg))) if deg else []
             print(f"[diskann .graph] node {i}: degree={deg} neighbors={nbrs[:8]}", flush=True)
 

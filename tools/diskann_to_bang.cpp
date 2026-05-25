@@ -1,9 +1,11 @@
 // tools/diskann_to_bang.cpp
-// Convert DiskANN in-memory index graph file → bang_repro graph.bin
+// Convert DiskANN in-memory index graph file -> bang_repro graph.bin
 //
 // DiskANN graph file format (.graph):
-//   [index_size: uint64]      — total bytes of adjacency data
-//   [max_degree: uint32]      — R (max out-degree)
+//   [index_size: uint64]      total bytes in the serialized graph file
+//   [max_degree: uint32]      R (max observed out-degree)
+//   [entry_point: uint32]     DiskANN search entry point
+//   [num_frozen: uint64]      usually 0 for ordinary memory indexes
 //   for each node i (0 to N-1):
 //     [degree_i: uint32]
 //     [neighbor_0 ... neighbor_{degree_i-1}: uint32]
@@ -96,24 +98,73 @@ int main(int argc, char** argv)
   FILE* fg = std::fopen(graph_path, "rb");
   if (!fg) { std::perror(graph_path); return 1; }
 
+  std::fseek(fg, 0, SEEK_END);
+  const uint64_t graph_file_size = (uint64_t)std::ftell(fg);
+  std::fseek(fg, 0, SEEK_SET);
+
   uint64_t index_size = 0;
   uint32_t max_degree = 0;
   uint32_t diskann_entry_point = 0;
-  std::fread(&index_size, sizeof(uint64_t), 1, fg);
-  std::fread(&max_degree, sizeof(uint32_t), 1, fg);
-  std::fread(&diskann_entry_point, sizeof(uint32_t), 1, fg);  // DiskANN header has entry_point after max_degree
-  std::fprintf(stderr, "[convert] DiskANN graph: index_size=%lu max_degree=%u entry_point=%u\n",
-               (unsigned long)index_size, max_degree, diskann_entry_point);
+  uint64_t num_frozen_points = 0;
+  if (std::fread(&index_size, sizeof(uint64_t), 1, fg) != 1 ||
+      std::fread(&max_degree, sizeof(uint32_t), 1, fg) != 1 ||
+      std::fread(&diskann_entry_point, sizeof(uint32_t), 1, fg) != 1 ||
+      std::fread(&num_frozen_points, sizeof(uint64_t), 1, fg) != 1) {
+    std::fprintf(stderr, "Corrupt DiskANN graph header: %s\n", graph_path);
+    std::fclose(fg);
+    return 1;
+  }
+  uint64_t bytes_read = sizeof(uint64_t) + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint64_t);
+  std::fprintf(stderr,
+               "[convert] DiskANN graph: file_size=%lu index_size=%lu max_degree=%u "
+               "entry_point=%u frozen=%lu\n",
+               (unsigned long)graph_file_size,
+               (unsigned long)index_size,
+               max_degree,
+               diskann_entry_point,
+               (unsigned long)num_frozen_points);
+  if (index_size != graph_file_size) {
+    std::fprintf(stderr,
+                 "[convert] warning: index_size != file size; continuing, but verify the source "
+                 "is a DiskANN .graph file and not a sector-aligned _disk.index file.\n");
+  }
+  if (max_degree == 0 || max_degree > 4096) {
+    std::fprintf(stderr, "Unreasonable max_degree=%u; wrong graph format or corrupt header.\n", max_degree);
+    std::fclose(fg);
+    return 1;
+  }
 
   // Read all adjacency lists
   std::vector<std::vector<uint32_t>> adj_lists;
   adj_lists.reserve(2000000);
-  while (!std::feof(fg)) {
+  while (bytes_read < graph_file_size) {
     uint32_t degree = 0;
     if (std::fread(&degree, sizeof(uint32_t), 1, fg) != 1) break;
+    bytes_read += sizeof(uint32_t);
+    if (degree > max_degree) {
+      std::fprintf(stderr,
+                   "Bad degree %u at node %zu (max_degree=%u). The graph is probably "
+                   "being read with the wrong header size.\n",
+                   degree, adj_lists.size(), max_degree);
+      std::fclose(fg);
+      return 1;
+    }
+    const uint64_t row_bytes = (uint64_t)degree * sizeof(uint32_t);
+    if (bytes_read + row_bytes > graph_file_size) {
+      std::fprintf(stderr,
+                   "Truncated row at node %zu: degree=%u exceeds remaining file bytes.\n",
+                   adj_lists.size(), degree);
+      std::fclose(fg);
+      return 1;
+    }
     std::vector<uint32_t> nbrs(degree);
-    if (degree > 0)
-      std::fread(nbrs.data(), sizeof(uint32_t), degree, fg);
+    if (degree > 0 &&
+        std::fread(nbrs.data(), sizeof(uint32_t), degree, fg) != degree) {
+      std::fprintf(stderr, "Could not read neighbors for node %zu\n", adj_lists.size());
+      std::fclose(fg);
+      return 1;
+    }
+    bytes_read += row_bytes;
     adj_lists.push_back(std::move(nbrs));
   }
   std::fclose(fg);
@@ -147,16 +198,39 @@ int main(int argc, char** argv)
   int hdr[4] = { N_use, dim, R, medoid };
   std::fwrite(hdr, sizeof(int), 4, fout);
 
+  uint64_t dropped_out_of_range = 0;
+  uint64_t dropped_self_edges = 0;
   std::vector<int> row(R, -1);
   for (int i = 0; i < N_use; i++) {
     std::fill(row.begin(), row.end(), -1);
     const auto& nbrs = adj_lists[i];
-    int cnt = std::min((int)nbrs.size(), R);
-    for (int j = 0; j < cnt; j++) row[j] = (int)nbrs[j];
+    int cnt = 0;
+    for (uint32_t nb : nbrs) {
+      if ((int)nb == i) {
+        dropped_self_edges++;
+        continue;
+      }
+      if (nb >= (uint32_t)N_use) {
+        dropped_out_of_range++;
+        continue;
+      }
+      if (cnt < R) row[cnt++] = (int)nb;
+    }
     std::fwrite(row.data(), sizeof(int), R, fout);
   }
   std::fclose(fout);
-  std::fprintf(stderr, "[convert] Saved %s  (N=%d R=%d medoid=%d)\n",
-               out_path, N_use, R, medoid);
+  std::fprintf(stderr,
+               "[convert] Saved %s  (N=%d R=%d medoid=%d dropped_oob=%lu dropped_self=%lu)\n",
+               out_path,
+               N_use,
+               R,
+               medoid,
+               (unsigned long)dropped_out_of_range,
+               (unsigned long)dropped_self_edges);
+  if (dropped_out_of_range > 0) {
+    std::fprintf(stderr,
+                 "[convert] warning: dropped out-of-range neighbors. If you used --N to crop "
+                 "a larger DiskANN graph, recall may be poor; rebuild the graph at that N.\n");
+  }
   return 0;
 }
