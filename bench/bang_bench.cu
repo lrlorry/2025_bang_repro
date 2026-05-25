@@ -23,16 +23,80 @@
 #include <cstdlib>
 #include <vector>
 #include <random>
+#include <numeric>
 #include <algorithm>
 #include <chrono>
+#include <omp.h>
 
 using namespace bang_repro::engineered;
 using bang_repro::plain::HostGraph;
 using bang_repro::plain::DevicePQ;
 
-// ── PQ codebook: random samples from dataset as centroids ────────────────────
-// Better recall than pure Gaussian random, no expensive k-means
-static void build_pq_sampled(
+// ── PQ codebook: k-means training (n_iter iterations, OpenMP assignment) ─────
+// Random sampling gives recall~1% on SIFT1M; k-means gives recall~50-80%.
+static void build_pq_kmeans(
+    const std::vector<float>& vecs, int N, int dim,
+    int M, int chunk_dim,
+    std::vector<uint8_t>& h_codes,
+    std::vector<float>&   h_table,
+    std::mt19937& rng,
+    int n_iter = 10)
+{
+  h_table.resize((long long)M * 256 * chunk_dim);
+  h_codes.resize((long long)N * M);
+
+  // per-chunk k-means: centroids fit in cache (256×16 floats = 16KB)
+  std::vector<int>   assign(N);
+  std::vector<float> new_cents(256 * chunk_dim);
+  std::vector<int>   cnt(256);
+
+  for (int c = 0; c < M; c++) {
+    float* cents = h_table.data() + (long long)c * 256 * chunk_dim;
+
+    // Init centroids: shuffle and pick first 256
+    std::vector<int> idx(N);
+    std::iota(idx.begin(), idx.end(), 0);
+    std::shuffle(idx.begin(), idx.end(), rng);
+    for (int k = 0; k < 256; k++) {
+      const float* src = vecs.data() + (long long)idx[k] * dim + c * chunk_dim;
+      std::copy(src, src + chunk_dim, cents + k * chunk_dim);
+    }
+
+    for (int iter = 0; iter < n_iter; iter++) {
+      // Assignment (parallel)
+      #pragma omp parallel for schedule(dynamic, 2000)
+      for (int i = 0; i < N; i++) {
+        const float* v = vecs.data() + (long long)i * dim + c * chunk_dim;
+        float best_d = 1e30f; int best_k = 0;
+        for (int k = 0; k < 256; k++) {
+          const float* ct = cents + k * chunk_dim;
+          float d = 0.f;
+          for (int d_ = 0; d_ < chunk_dim; d_++) { float diff = v[d_]-ct[d_]; d += diff*diff; }
+          if (d < best_d) { best_d = d; best_k = k; }
+        }
+        assign[i] = best_k;
+      }
+      // Update centroids (sequential, fast)
+      std::fill(new_cents.begin(), new_cents.end(), 0.f);
+      std::fill(cnt.begin(), cnt.end(), 0);
+      for (int i = 0; i < N; i++) {
+        int k = assign[i]; cnt[k]++;
+        const float* v = vecs.data() + (long long)i * dim + c * chunk_dim;
+        for (int d_ = 0; d_ < chunk_dim; d_++) new_cents[k * chunk_dim + d_] += v[d_];
+      }
+      for (int k = 0; k < 256; k++)
+        if (cnt[k] > 0)
+          for (int d_ = 0; d_ < chunk_dim; d_++)
+            cents[k * chunk_dim + d_] = new_cents[k * chunk_dim + d_] / cnt[k];
+    }
+    // Final codes from last assignment
+    for (int i = 0; i < N; i++) h_codes[(long long)i * M + c] = (uint8_t)assign[i];
+    std::fprintf(stderr, "[pq_kmeans] chunk %d/%d done\n", c+1, M);
+  }
+}
+
+// (kept for reference, replaced by build_pq_kmeans)
+static void build_pq_sampled_unused(
     const std::vector<float>& vecs, int N, int dim,
     int M, int chunk_dim,
     std::vector<uint8_t>& h_codes,
@@ -177,7 +241,7 @@ int main(int argc, char** argv)
   std::mt19937 rng(54321);
   std::vector<uint8_t> h_codes;
   std::vector<float>   h_table;
-  build_pq_sampled(h_base, N, dim, M, chunk_dim, h_codes, h_table, rng);
+  build_pq_kmeans(h_base, N, dim, M, chunk_dim, h_codes, h_table, rng, /*n_iter=*/10);
   std::fprintf(stderr, "[bang_bench] PQ done.\n");
 
   // ── Upload PQ to GPU ────────────────────────────────────────────────────────
