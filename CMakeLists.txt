@@ -62,3 +62,7 @@ target_link_libraries(bang_bench_L128 ${CUDA_LIBRARIES} -fopenmp)
 
 cuda_add_executable(bang_bench_L256 ${BENCH_SRCS} OPTIONS -DkL_OVERRIDE=256 -Xcompiler=-fopenmp)
 target_link_libraries(bang_bench_L256 ${CUDA_LIBRARIES} -fopenmp)
+
+# ── Utility tools (plain C++, no GPU) ───────────────────────────────────────
+add_executable(fvecs_to_bin    tools/fvecs_to_bin.cpp)
+add_executable(diskann_to_bang tools/diskann_to_bang.cpp)
