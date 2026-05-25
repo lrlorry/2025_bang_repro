@@ -8,7 +8,7 @@ constexpr int kDim     = 128;    // 向量维度
 constexpr int kNumQ    = 16;     // query batch size
 
 // ── 图参数（对应 BANG MAX_R=64，demo 用较小值） ─────────────────────────────
-constexpr int kR       = 16;     // graph degree
+constexpr int kR       = 64;     // graph degree
 
 // ── PQ 参数 ──────────────────────────────────────────────────────────────────
 constexpr int kM       = 8;      // PQ chunks（uChunks）

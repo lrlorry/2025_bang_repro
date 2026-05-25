@@ -5,7 +5,7 @@ namespace bang_repro::engineered {
 constexpr int kN       = 8192;
 constexpr int kDim     = 128;
 constexpr int kNumQ    = 16;
-constexpr int kR       = 16;     // graph degree
+constexpr int kR       = 64;     // graph degree (BANG原论文 MAX_R=64；N=1M需要64+才有好recall)
 constexpr int kM       = 8;      // PQ chunks
 constexpr int kPQCents = 256;
 constexpr int kChunkDim = kDim / kM;
