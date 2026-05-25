@@ -43,7 +43,7 @@ cuda_add_executable(bang_build
 )
 target_link_libraries(bang_build ${CUDA_LIBRARIES} -fopenmp)
 
-set(BENCH_SRCS bench/bang_bench.cu engineered/engineered_build.cu engineered/engineered_search.cu)
+set(BENCH_SRCS bench/bang_bench.cu engineered/engineered_build.cu engineered/engineered_search.cu plain/plain_search.cu)
 
 cuda_add_executable(bang_bench_L16 ${BENCH_SRCS} OPTIONS -DkL_OVERRIDE=16 -Xcompiler=-fopenmp)
 target_link_libraries(bang_bench_L16 ${CUDA_LIBRARIES} -fopenmp)

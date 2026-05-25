@@ -264,6 +264,16 @@ int main(int argc, char** argv)
   CUDA_CHECK(cudaMemcpy(d_queries, h_queries.data(),
                         (long long)numQ * dim * sizeof(float), cudaMemcpyHostToDevice));
 
+  // ── Diagnostic: plain search recall (isolates engineered-search bugs) ───────
+  {
+    bang_repro::plain::search_bang_plain(graph, pq, d_queries, numQ, dim, d_out_ids, d_out_dists);
+    CUDA_CHECK(cudaDeviceSynchronize());
+    std::vector<int> h_plain(numQ * topK);
+    CUDA_CHECK(cudaMemcpy(h_plain.data(), d_out_ids, (long long)numQ * topK * sizeof(int), cudaMemcpyDeviceToHost));
+    float r = compute_recall(h_gt, h_plain, numQ, gt_k, topK);
+    std::fprintf(stderr, "[bang_bench] PLAIN   L=%d  Recall@%d=%.4f\n", kL, topK, r);
+  }
+
   // ── Warmup ──────────────────────────────────────────────────────────────────
   std::fprintf(stderr, "[bang_bench] Warmup ...\n");
   search_bang_engineered(graph, pq, d_queries, numQ, dim, d_out_ids, d_out_dists);
