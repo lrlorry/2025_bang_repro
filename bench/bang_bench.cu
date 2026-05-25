@@ -1,21 +1,18 @@
 // bench/bang_bench.cu
-// BANG SIFT1M benchmark — builds Vamana graph (OpenMP), runs GPU PQ search,
-// outputs ONE CSV line to stdout: L,recall,qps,search_ms
+// BANG SIFT1M benchmark — GPU PQ search, outputs ONE CSV line: L,recall,qps,search_ms
 //
-// Build with one of:
-//   bang_bench_L16   (-DkL_OVERRIDE=16)
-//   bang_bench_L32   (-DkL_OVERRIDE=32)
-//   bang_bench_L48   (-DkL_OVERRIDE=48)
-//   bang_bench_L64   (-DkL_OVERRIDE=64)
+// Pass --graph PATH to skip Vamana build and load pre-built graph from bang_build.
 //
 // Usage:
-//   bang_bench_L32 --base sift1m_data/sift_base.fvecs \
+//   bang_bench_L32 --base  sift1m_data/sift_base.fvecs \
 //                  --query sift1m_data/sift_query.fvecs \
 //                  --gt    sift1m_data/sift_groundtruth.ivecs \
-//                  --N     100000
+//                  --graph results/sift1m_graph.bin \
+//                  --N 1000000
 
 #include "common/cuda_utils.cuh"
 #include "common/fvecs_io.cuh"
+#include "common/graph_io.cuh"
 #include "engineered/config.cuh"
 #include "engineered/engineered_build.cuh"
 #include "engineered/engineered_search.cuh"
@@ -118,14 +115,16 @@ int main(int argc, char** argv)
   const char* base_path  = "sift1m_data/sift_base.fvecs";
   const char* query_path = "sift1m_data/sift_query.fvecs";
   const char* gt_path    = "sift1m_data/sift_groundtruth.ivecs";
-  int  max_N     = 1000000;  // default: full SIFT1M
-  bool local_gt  = false;    // --local-gt: compute brute-force GT (for truncated N)
-  int  max_numQ  = 1000;     // limit queries for brute-force GT mode
+  const char* graph_path = nullptr;   // --graph: load pre-built graph (skip build)
+  int  max_N     = 1000000;
+  bool local_gt  = false;
+  int  max_numQ  = 1000;
 
   for (int i = 1; i < argc; i++) {
-    if      (!strcmp(argv[i], "--base")     && i+1 < argc) base_path = argv[++i];
+    if      (!strcmp(argv[i], "--base")     && i+1 < argc) base_path  = argv[++i];
     else if (!strcmp(argv[i], "--query")    && i+1 < argc) query_path = argv[++i];
     else if (!strcmp(argv[i], "--gt")       && i+1 < argc) gt_path    = argv[++i];
+    else if (!strcmp(argv[i], "--graph")    && i+1 < argc) graph_path = argv[++i];
     else if (!strcmp(argv[i], "--N")        && i+1 < argc) max_N      = std::atoi(argv[++i]);
     else if (!strcmp(argv[i], "--local-gt"))                local_gt   = true;
     else if (!strcmp(argv[i], "--numQ")     && i+1 < argc) max_numQ   = std::atoi(argv[++i]);
@@ -135,7 +134,7 @@ int main(int argc, char** argv)
   int N = 0, dim = 0, numQ = 0, qdim = 0;
 
   std::fprintf(stderr, "[bang_bench] Loading base   %s (max %d)\n", base_path, max_N);
-  auto h_base    = load_fvecs(base_path,  N,    dim,  max_N);
+  auto h_base    = load_fvecs(base_path,  N,   dim,  max_N);
   std::fprintf(stderr, "[bang_bench] Loading query  %s\n", query_path);
   auto h_queries = load_fvecs(query_path, numQ, qdim, local_gt ? max_numQ : -1);
 
@@ -148,7 +147,7 @@ int main(int argc, char** argv)
     std::fprintf(stderr, "[bang_bench] GT done.\n");
   } else {
     int gt_N = 0;
-    std::fprintf(stderr, "[bang_bench] Loading GT     %s\n", gt_path);
+    std::fprintf(stderr, "[bang_bench] Loading GT %s\n", gt_path);
     h_gt = load_ivecs(gt_path, gt_N, gt_k);
     numQ = std::min(numQ, gt_N);
   }
@@ -158,13 +157,20 @@ int main(int argc, char** argv)
 
   const int M = kM, chunk_dim = kChunkDim, topK = kTopK, R = kR;
 
-  // ── Build Vamana graph ──────────────────────────────────────────────────────
-  std::fprintf(stderr, "[bang_bench] Building Vamana (R=%d alpha=1.2 L_build=64) ...\n", R);
-  auto t_build0 = std::chrono::high_resolution_clock::now();
-  auto graph = build_vamana_engineered(h_base, N, dim, R, 1.2f, 64);
-  auto t_build1 = std::chrono::high_resolution_clock::now();
-  double build_s = std::chrono::duration<double>(t_build1 - t_build0).count();
-  std::fprintf(stderr, "[bang_bench] Vamana done in %.2fs, medoid=%d\n", build_s, graph.medoid);
+  // ── Vamana graph: load from file or build ───────────────────────────────────
+  bang_repro::plain::HostGraph graph;
+  if (graph_path) {
+    std::fprintf(stderr, "[bang_bench] Loading graph from %s ...\n", graph_path);
+    graph = load_graph(graph_path);
+    graph.vecs = h_base;   // reattach full-precision vectors for exact rerank
+  } else {
+    std::fprintf(stderr, "[bang_bench] Building Vamana (R=%d alpha=1.2 L_build=64) ...\n", R);
+    auto t0 = std::chrono::high_resolution_clock::now();
+    graph = build_vamana_engineered(h_base, N, dim, R, 1.2f, 64);
+    double build_s = std::chrono::duration<double>(
+        std::chrono::high_resolution_clock::now() - t0).count();
+    std::fprintf(stderr, "[bang_bench] Vamana done in %.1fs, medoid=%d\n", build_s, graph.medoid);
+  }
 
   // ── Build PQ ────────────────────────────────────────────────────────────────
   std::fprintf(stderr, "[bang_bench] Building PQ (M=%d chunk_dim=%d) ...\n", M, chunk_dim);

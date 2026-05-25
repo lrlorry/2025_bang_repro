@@ -76,21 +76,33 @@ else
 fi
 
 if [ "$HAS_SIFT" -eq 1 ]; then
-  # --local-gt: compute brute-force GT on the loaded N vectors (avoids gt ID mismatch
-  # when N < 1M).  Use --N 1000000 to load full dataset and use the .ivecs gt file.
-  BENCH_N="${BANG_BENCH_N:-100000}"
-  BENCH_GT_FLAG="--local-gt --numQ 1000"
-  if [ "$BENCH_N" = "1000000" ]; then
-    BENCH_GT_FLAG="--gt $SIFT_GT"
+  BENCH_N="${BANG_BENCH_N:-1000000}"
+  GRAPH_BIN="$RESULTS/sift1m_graph.bin"
+
+  # ── Step 1: build Vamana graph once, save to disk ──────────────────────────
+  if [ ! -f "$GRAPH_BIN" ]; then
+    if [ -f "$BUILD/bang_build" ]; then
+      echo ""
+      echo "--- Building Vamana graph (N=${BENCH_N}) → $GRAPH_BIN ---"
+      "$BUILD/bang_build" --base "$SIFT_BASE" --N "$BENCH_N" --out "$GRAPH_BIN"
+    else
+      echo "Warning: $BUILD/bang_build not found — graph will be rebuilt per L value"
+    fi
+  else
+    echo "Reusing cached graph: $GRAPH_BIN"
   fi
+
+  # ── Step 2: sweep L values, reuse pre-built graph ──────────────────────────
+  GRAPH_FLAG=""
+  [ -f "$GRAPH_BIN" ] && GRAPH_FLAG="--graph $GRAPH_BIN"
 
   for L in 16 32 48 64; do
     BIN="$BUILD/bang_bench_L${L}"
     if [ -f "$BIN" ]; then
       echo ""
       echo "--- bang_bench_L${L} (N=${BENCH_N}) ---"
-      "$BIN" --base "$SIFT_BASE" --query "$SIFT_QUERY" \
-             --N "$BENCH_N" ${BENCH_GT_FLAG} \
+      "$BIN" --base "$SIFT_BASE" --query "$SIFT_QUERY" --gt "$SIFT_GT" \
+             --N "$BENCH_N" ${GRAPH_FLAG} \
              >> "$SWEEP_CSV"
     else
       echo "Warning: $BIN not found, skipping L=$L"
