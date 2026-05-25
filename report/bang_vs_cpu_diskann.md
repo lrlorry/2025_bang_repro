@@ -148,23 +148,60 @@ BANG 的优势不是"GPU 更快"，而是：
 
 ### 7.2 差距原因分析
 
-**（1）PQ 量化质量差距（主要原因，影响 recall）**
+官方 BANG recall 高出我们约 **0.09~0.52**，根本原因不是"GPU kernel 写得更快"，而是**输入质量和候选生成质量完全不在一个级别**。核心差距来自以下五点：
 
-官方 BANG 使用 DiskANN 内置的 **OPQ（Optimized Product Quantization）**，在训练时联合优化旋转矩阵与码本，使各子空间方差均匀分布，量化误差最小化。
+---
 
-我们的复现使用**普通 k-means PQ**（10 轮迭代，M=8 子空间，K=256 聚类中心），无旋转优化，各子空间量化误差不均匀。
+**差距 1：图质量**
 
-OPQ vs 普通 PQ 的 recall 差距在 M=8、D=128 的场景下可达 0.05~0.15（越短 L 差距越大，因为 PQ approximate distance 排序误差更多影响 beam search 方向）。
+官方 BANG 直接读取 DiskANN/Vamana 以 `R=64, L_build=200` 构建的原版 graph，图质量极高（每条边都经过 full-precision robust pruning）。
 
-**（2）候选集质量差距（影响 recall 和 QPS）**
+我们的教学版（`engineered/engineered_build.cu`）使用简化的 Vamana builder，`L_build=64`（见 [bench/bang_build.cu:38](../bench/bang_build.cu)），图质量差距显著——low-quality graph 导致 beam search 在每一步都有更高概率走错方向，recall 损失会在所有 L 值下持续体现。
 
-官方 BANG 使用 DiskANN **磁盘索引**（`_disk.index`）经 `bang_preprocess.py` 转换，保留了原始 sector-aligned 布局中完整的邻居信息（DiskANN 构建时的全精度 full-beam-width 图）。
+---
 
-我们的复现从 DiskANN **内存索引**转换，经过 `diskann_to_bang.cpp`，在解析过程中存在额外的边过滤（out-of-range、self-edge 过滤），导致部分邻居丢失。
+**差距 2：PQ 压缩粒度太粗**
 
-**（3）Beam search 实现差距（影响 QPS）**
+我们教学版固定 `kM=8`（见 [engineered/config.cuh:9](../engineered/config.cuh)），即每个 128 维向量只用 8 个 PQ code（每子空间 16 维）。这对 SIFT1M/128D 而言极粗，PQ 距离排序误差大，beam search 容易被带偏。
 
-官方 `bang_search.cu` 的 CUDA kernel 针对 A100 架构深度优化（warp-level primitives、shared memory 布局、异步流水线），我们的复现未触及 GPU kernel，仅在 CPU 层面进行了图转换和 PQ 训练。QPS 差距（5×~21×）主要来自 GPU 端 kernel 效率，与我们的复现路径无关。
+官方 BANG 直接读取 DiskANN 生成的 `_pq_compressed.bin` + `_pq_pivots.bin`，`uChunks`（即 M）由 `-B` 参数控制，通常远大于 8。`compute_neighborDist_par` 按 `n_chunks` 查表求和（见 `BANG_Base/bang_search.cu:1201`），子空间更细、距离估计更准。
+
+---
+
+**差距 3：PQ 距离表计算语义不同**
+
+官方 `populate_pqDist_par` 使用 DiskANN 的 `d_centroid`（dataset centroid）和 `d_chunksOffset`（子空间 chunk offset），公式为：
+
+```
+pq_dist = sum_over_chunks( ||query_chunk - centroid_chunk||² )
+         = 查表，以 (query - dataset_centroid) 为基准
+```
+
+即官方严格复刻了 DiskANN PQ 文件语义：zero-centering + per-chunk offset（见 `BANG_Base/bang_search.cu:1083`）。
+
+我们教学版使用均匀切分（`chunk_dim = dim / M`）+ 简单 k-means，没有处理 dataset centroid 和 chunk offset，PQ 距离与官方存在系统性偏差。
+
+---
+
+**差距 4：worklist 初始化和 candidate 管理简化**
+
+官方搜索流程：`neighbor_filtering → PQ distance → compute_parent1`，然后每轮 `sort_msort + merge + compute_parent2`，维护 `BestLSets_count / visited / mark` 三套状态（见 `BANG_Base/bang_search.cu:650`），candidate 管理精细。
+
+我们教学版（`plain/plain_search.cu:356`）直接以 `node 0`（medoid）的邻居作为初始种子塞入 worklist，再逐轮 select parent，机制相似但候选控制远没有官方细，早期迭代的起点质量差会向后传播。
+
+---
+
+**差距 5：rerank 候选池小**
+
+官方在 search loop 中异步 H2D 每轮 expanded parent 的 **full vectors**（`FPSetCoordsList`），搜索结束后对所有历史 parent candidates 做 exact L2 rerank（见 `BANG_Base/bang_search.cu:795` 和 `:969`）。候选池大小 = 整个搜索过程中展开过的所有 parent 数量。
+
+我们教学版（`plain/plain_search.cu:428`）只对最终 worklist 的 `kL` 个候选做 exact rerank，候选池仅 `kL`（=L），远小于官方。PQ 排序误差没有被充分纠正。
+
+---
+
+**一句话总结**
+
+> 官方 recall 高，是 **DiskANN 原版图（R=64/L=200）+ DiskANN PQ 产物（更多 chunks + zero-centering）+ 精细的 worklist/parent 管理 + 更大的 rerank 候选池**共同作用的结果。我们的教学版是对 BANG 架构流程的结构复现，不是对其输入质量和候选管理的完整复现。
 
 ### 7.3 已发现并修复的 Bug
 
