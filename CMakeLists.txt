@@ -56,3 +56,9 @@ target_link_libraries(bang_bench_L48 ${CUDA_LIBRARIES} -fopenmp)
 
 cuda_add_executable(bang_bench_L64 ${BENCH_SRCS} OPTIONS -DkL_OVERRIDE=64 -Xcompiler=-fopenmp)
 target_link_libraries(bang_bench_L64 ${CUDA_LIBRARIES} -fopenmp)
+
+cuda_add_executable(bang_bench_L128 ${BENCH_SRCS} OPTIONS -DkL_OVERRIDE=128 -Xcompiler=-fopenmp)
+target_link_libraries(bang_bench_L128 ${CUDA_LIBRARIES} -fopenmp)
+
+cuda_add_executable(bang_bench_L256 ${BENCH_SRCS} OPTIONS -DkL_OVERRIDE=256 -Xcompiler=-fopenmp)
+target_link_libraries(bang_bench_L256 ${CUDA_LIBRARIES} -fopenmp)
