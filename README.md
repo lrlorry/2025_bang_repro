@@ -1,7 +1,7 @@
 # BANG Reproduction — Billion-scale ANNS on GPU
 
 > IEEE Transactions on Big Data 2025  
-> 复现实现：plain reference + engineered 工程优化版，附 Vamana 图构建与 GPU PQ 搜索全流程
+> 默认复现路线：官方 BANG Base + DiskANN 产物。`plain/` 和 `engineered/` 仅保留作教学/源码理解用。
 
 ---
 
@@ -28,17 +28,86 @@ Search pipeline (per iteration):
 
 ---
 
+## 推荐路线：官方 BANG Base
+
+不要再用本目录的教学版 builder 跑正式结果。正式复现走：
+
+```text
+TexMex/BigANN vectors
+  -> DiskANN .bin
+  -> DiskANN build_disk_index
+  -> official BANG bang_preprocess.py
+  -> official BANG_Base/build/bang_search
+```
+
+构建官方 BANG：
+
+```bash
+bash scripts/build_official_bang.sh
+```
+
+把 `fvecs/bvecs/ivecs` 转成 DiskANN/BANG `.bin`：
+
+```bash
+cd 2025_bang_repro
+mkdir -p build && cd build && cmake .. && make fvecs_to_bin
+cd ..
+bash scripts/convert_vecs_to_diskann_bin.sh sift1m_data/sift_base.fvecs  results/official/sift1m_base.bin  float
+bash scripts/convert_vecs_to_diskann_bin.sh sift1m_data/sift_query.fvecs results/official/sift1m_query.bin float
+```
+
+计算官方 `bang_search` 需要的 groundtruth：
+
+```bash
+COMPUTE_GROUNDTRUTH=/path/to/DiskANN/build/apps/compute_groundtruth \
+bash scripts/compute_official_groundtruth.sh \
+  --base results/official/sift1m_base.bin \
+  --query results/official/sift1m_query.bin \
+  --out results/official/sift1m_groundtruth.bin \
+  --data-type float \
+  --k 10
+```
+
+用 DiskANN 原版构图并生成 BANG 需要的 `_disk.bin/_disk_metadata.bin`：
+
+```bash
+BUILD_DISK_INDEX=/path/to/DiskANN/build/apps/build_disk_index \
+bash scripts/prepare_official_diskann_index.sh \
+  --data results/official/sift1m_base.bin \
+  --prefix results/official/sift1m_index \
+  --data-type float \
+  --dim 128 \
+  -R 64 -L 200 -B 1 -M 48
+```
+
+运行官方 BANG：
+
+```bash
+bash scripts/run_official_bang.sh \
+  --prefix results/official/sift1m_index \
+  --query results/official/sift1m_query.bin \
+  --gt results/official/sift1m_groundtruth.bin \
+  --numq 10000 \
+  --k 10 \
+  --data-type float \
+  --dist-fn l2
+```
+
+注意：groundtruth 也必须是 DiskANN/BANG `.bin` truthset 格式：`[N, K, ids, dists]`。TexMex `.ivecs` 不能直接喂给官方 `bang_search`。
+
+---
+
 ## 文件结构
 
 ```
 plain/
-  plain_build.cu/cuh    Vamana 图构建（CPU 串行）
-  plain_search.cu/cuh   GPU PQ 搜索（顺序执行）
+  plain_build.cu/cuh    教学版 Vamana 图构建（CPU 串行，不用于正式复现）
+  plain_search.cu/cuh   教学版 GPU PQ 搜索（顺序执行）
   plain_main.cu         主程序
   config.cuh            超参数
 engineered/
-  engineered_build.cu/cuh  Vamana 图构建（OpenMP 并行）
-  engineered_search.cu/cuh GPU PQ 搜索（4 streams / 8-thread PQ / shared-mem merge）
+  engineered_build.cu/cuh  教学版 Vamana 图构建（OpenMP 并行，不用于正式复现）
+  engineered_search.cu/cuh 教学版 GPU PQ 搜索（4 streams / 8-thread PQ / shared-mem merge）
   engineered_main.cu    主程序
   config.cuh            超参数 + kTPNbr=8
 common/
@@ -46,6 +115,12 @@ common/
 bench/
   bench.sh              benchmark 脚本（timing + recall）
   plot.py               生成对比图（需要 matplotlib）
+scripts/
+  build_official_bang.sh             构建官方 BANG_Base
+  prepare_official_diskann_index.sh  调 DiskANN build_disk_index + 官方 bang_preprocess.py
+  run_official_bang.sh               运行官方 bang_search
+  convert_vecs_to_diskann_bin.sh     TexMex vecs -> DiskANN .bin
+  compute_official_groundtruth.sh    调 DiskANN compute_groundtruth
 report/
   bang_audit_report.md  源码审计（含 LOAD-01 bug）
   bang_source_map.md    数据结构 + 调用链 + kernel 索引

@@ -1,8 +1,11 @@
 BUILD_DIR ?= build
 
-.PHONY: all plain engineered clean
+.PHONY: all official plain engineered clean
 
-all: plain engineered
+all: official
+
+official:
+	bash scripts/build_official_bang.sh
 
 plain: $(BUILD_DIR)/bang_plain
 

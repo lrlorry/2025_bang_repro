@@ -84,9 +84,9 @@ graph > base（因为包含 full vectors + adjacency list）
 **前置步骤**：
 1. 安装编译 DiskANN
 2. `build_disk_index --data_type float --dist_fn l2 --data_path sift1m_base.bin --index_path_prefix sift1m_index -R 64 -L 200 -B 1 -M 48`
-3. `python bang_preprocess.py sift1m_index_disk.index sift1m_index_disk.bin 128 1 64`
-4. `bash scripts/build_bang_base.sh`
-5. `./bang_search sift1m_index sift1m_query.bin sift1m_groundtruth.bin 10000 10 float l2`
+3. `python bang_preprocess.py sift1m_index_disk.index sift1m_index_disk.bin 128 2 64`
+4. `bash scripts/build_official_bang.sh`
+5. `bash scripts/run_official_bang.sh --prefix sift1m_index --query sift1m_query.bin --gt sift1m_groundtruth.bin --numq 10000 --k 10 --data-type float --dist-fn l2`
 
 ---
 
