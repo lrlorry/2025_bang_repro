@@ -372,7 +372,7 @@ def main():
                  os.path.join(FIGURES_DIR, "speedup.png"))
 
     plot_repro_vs_official(
-        repro_path    = os.path.join(RESULTS_DIR, "bang_sweep.csv"),
+        repro_path    = os.path.join(RESULTS_DIR, "sift1m_results.csv"),
         official_path = os.path.join(RESULTS_DIR, "bang_official_sweep.csv"),
         out_path      = os.path.join(FIGURES_DIR, "repro_vs_official.png"),
     )
