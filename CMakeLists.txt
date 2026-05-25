@@ -34,13 +34,17 @@ target_link_libraries(bang_engineered ${CUDA_LIBRARIES} -fopenmp)
 
 # ── bang_bench: SIFT1M benchmark，sweeping kL at compile time ────────────────
 # Each binary outputs one CSV line: L,recall,qps,search_ms
-# Used by bench/bench.sh to collect results/bang_sweep.csv
-foreach(kL_VAL 16 32 48 64)
-  cuda_add_executable(bang_bench_L${kL_VAL}
-    bench/bang_bench.cu
-    engineered/engineered_build.cu
-    engineered/engineered_search.cu
-    OPTIONS -DkL_OVERRIDE=${kL_VAL} -Xcompiler=-fopenmp
-  )
-  target_link_libraries(bang_bench_L${kL_VAL} ${CUDA_LIBRARIES} -fopenmp)
-endforeach()
+# Explicit targets (avoid foreach + cuda_add_executable interaction in cmake 3.3)
+set(BENCH_SRCS bench/bang_bench.cu engineered/engineered_build.cu engineered/engineered_search.cu)
+
+cuda_add_executable(bang_bench_L16 ${BENCH_SRCS} OPTIONS -DkL_OVERRIDE=16 -Xcompiler=-fopenmp)
+target_link_libraries(bang_bench_L16 ${CUDA_LIBRARIES} -fopenmp)
+
+cuda_add_executable(bang_bench_L32 ${BENCH_SRCS} OPTIONS -DkL_OVERRIDE=32 -Xcompiler=-fopenmp)
+target_link_libraries(bang_bench_L32 ${CUDA_LIBRARIES} -fopenmp)
+
+cuda_add_executable(bang_bench_L48 ${BENCH_SRCS} OPTIONS -DkL_OVERRIDE=48 -Xcompiler=-fopenmp)
+target_link_libraries(bang_bench_L48 ${CUDA_LIBRARIES} -fopenmp)
+
+cuda_add_executable(bang_bench_L64 ${BENCH_SRCS} OPTIONS -DkL_OVERRIDE=64 -Xcompiler=-fopenmp)
+target_link_libraries(bang_bench_L64 ${CUDA_LIBRARIES} -fopenmp)

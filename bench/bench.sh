@@ -76,12 +76,21 @@ else
 fi
 
 if [ "$HAS_SIFT" -eq 1 ]; then
+  # --local-gt: compute brute-force GT on the loaded N vectors (avoids gt ID mismatch
+  # when N < 1M).  Use --N 1000000 to load full dataset and use the .ivecs gt file.
+  BENCH_N="${BANG_BENCH_N:-100000}"
+  BENCH_GT_FLAG="--local-gt --numQ 1000"
+  if [ "$BENCH_N" = "1000000" ]; then
+    BENCH_GT_FLAG="--gt $SIFT_GT"
+  fi
+
   for L in 16 32 48 64; do
     BIN="$BUILD/bang_bench_L${L}"
     if [ -f "$BIN" ]; then
       echo ""
-      echo "--- bang_bench_L${L} ---"
-      "$BIN" --base "$SIFT_BASE" --query "$SIFT_QUERY" --gt "$SIFT_GT" \
+      echo "--- bang_bench_L${L} (N=${BENCH_N}) ---"
+      "$BIN" --base "$SIFT_BASE" --query "$SIFT_QUERY" \
+             --N "$BENCH_N" ${BENCH_GT_FLAG} \
              >> "$SWEEP_CSV"
     else
       echo "Warning: $BIN not found, skipping L=$L"

@@ -92,31 +92,67 @@ static float compute_recall(
   return (float)hit / total;
 }
 
+// ── Brute-force GT for truncated N (avoids gt-ID mismatch) ──────────────────
+static std::vector<int> brute_force_gt(
+    const std::vector<float>& base, const std::vector<float>& queries,
+    int N, int numQ, int dim, int topK)
+{
+  std::vector<int> gt(numQ * topK);
+  for (int q = 0; q < numQ; q++) {
+    const float* qv = queries.data() + (long long)q * dim;
+    std::vector<std::pair<float,int>> dists(N);
+    for (int i = 0; i < N; i++) {
+      const float* v = base.data() + (long long)i * dim;
+      float d = 0.f;
+      for (int d_ = 0; d_ < dim; d_++) { float diff = qv[d_]-v[d_]; d += diff*diff; }
+      dists[i] = {d, i};
+    }
+    std::partial_sort(dists.begin(), dists.begin()+topK, dists.end());
+    for (int k = 0; k < topK; k++) gt[q*topK+k] = dists[k].second;
+  }
+  return gt;
+}
+
 int main(int argc, char** argv)
 {
   const char* base_path  = "sift1m_data/sift_base.fvecs";
   const char* query_path = "sift1m_data/sift_query.fvecs";
   const char* gt_path    = "sift1m_data/sift_groundtruth.ivecs";
-  int max_N = 100000;
+  int  max_N     = 1000000;  // default: full SIFT1M
+  bool local_gt  = false;    // --local-gt: compute brute-force GT (for truncated N)
+  int  max_numQ  = 1000;     // limit queries for brute-force GT mode
 
   for (int i = 1; i < argc; i++) {
-    if      (!strcmp(argv[i], "--base")  && i+1 < argc) base_path  = argv[++i];
-    else if (!strcmp(argv[i], "--query") && i+1 < argc) query_path = argv[++i];
-    else if (!strcmp(argv[i], "--gt")    && i+1 < argc) gt_path    = argv[++i];
-    else if (!strcmp(argv[i], "--N")     && i+1 < argc) max_N      = std::atoi(argv[++i]);
+    if      (!strcmp(argv[i], "--base")     && i+1 < argc) base_path = argv[++i];
+    else if (!strcmp(argv[i], "--query")    && i+1 < argc) query_path = argv[++i];
+    else if (!strcmp(argv[i], "--gt")       && i+1 < argc) gt_path    = argv[++i];
+    else if (!strcmp(argv[i], "--N")        && i+1 < argc) max_N      = std::atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--local-gt"))                local_gt   = true;
+    else if (!strcmp(argv[i], "--numQ")     && i+1 < argc) max_numQ   = std::atoi(argv[++i]);
   }
 
   // ── Load data ───────────────────────────────────────────────────────────────
-  int N = 0, dim = 0, numQ = 0, qdim = 0, gt_N = 0, gt_k = 0;
+  int N = 0, dim = 0, numQ = 0, qdim = 0;
 
-  std::fprintf(stderr, "[bang_bench] Loading base   %s (max %d)\n", base_path,  max_N);
+  std::fprintf(stderr, "[bang_bench] Loading base   %s (max %d)\n", base_path, max_N);
   auto h_base    = load_fvecs(base_path,  N,    dim,  max_N);
   std::fprintf(stderr, "[bang_bench] Loading query  %s\n", query_path);
-  auto h_queries = load_fvecs(query_path, numQ, qdim);
-  std::fprintf(stderr, "[bang_bench] Loading GT     %s\n", gt_path);
-  auto h_gt      = load_ivecs(gt_path,    gt_N, gt_k);
+  auto h_queries = load_fvecs(query_path, numQ, qdim, local_gt ? max_numQ : -1);
 
-  numQ = std::min(numQ, gt_N);   // align to available GT
+  // ── Ground truth ─────────────────────────────────────────────────────────────
+  std::vector<int> h_gt;
+  int gt_k = kTopK;
+  if (local_gt) {
+    std::fprintf(stderr, "[bang_bench] Computing brute-force GT (N=%d numQ=%d) ...\n", N, numQ);
+    h_gt = brute_force_gt(h_base, h_queries, N, numQ, dim, kTopK);
+    std::fprintf(stderr, "[bang_bench] GT done.\n");
+  } else {
+    int gt_N = 0;
+    std::fprintf(stderr, "[bang_bench] Loading GT     %s\n", gt_path);
+    h_gt = load_ivecs(gt_path, gt_N, gt_k);
+    numQ = std::min(numQ, gt_N);
+  }
+
   std::fprintf(stderr, "[bang_bench] N=%d dim=%d numQ=%d gt_k=%d kL=%d\n",
                N, dim, numQ, gt_k, kL);
 
