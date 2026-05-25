@@ -473,28 +473,6 @@ void search_bang_engineered(
     CUDA_CHECK(cudaMemcpyAsync(d_nb_h2d, h_nb, numQ * R * sizeof(int),
                                cudaMemcpyHostToDevice, streamChildren));
 
-    // 异步预取 candidate full vectors（streamFP）
-    // BANG: 每轮把 parent full vector 写入 FPSetCoordsList 并异步 H2D
-    // engineered 版：异步 H2D 当前 worklist 的前 kL 个 full vectors
-    // （search loop 结束前 streamFP 不同步，只在 rerank 前同步）
-    {
-      std::vector<int> h_wl_ids(numQ * kL);
-      CUDA_CHECK(cudaMemcpy(h_wl_ids.data(), d_wl_ids, numQ * kL * sizeof(int), cudaMemcpyDeviceToHost));
-      for (int q = 0; q < numQ; q++)
-        for (int i = 0; i < kL; i++) {
-          int cid = h_wl_ids[q * kL + i];
-          float* dst = h_cand_vecs + ((long long)q * kL + i) * dim;
-          if (cid >= 0 && cid < N)
-            std::copy(graph.vecs.begin() + (long long)cid * dim,
-                      graph.vecs.begin() + (long long)cid * dim + dim, dst);
-          else
-            std::fill(dst, dst + dim, 0.f);
-        }
-      CUDA_CHECK(cudaMemcpyAsync(d_cand_vecs, h_cand_vecs,
-                                 (long long)numQ * kL * dim * sizeof(float),
-                                 cudaMemcpyHostToDevice, streamFP));
-    }
-
     // GPU: filter + distance + merge（等 H2D 完成）
     CUDA_CHECK(cudaStreamSynchronize(streamChildren));
     bloom_filter_eng_kernel<<<numQ, R, 0, streamKernels>>>(d_nb_h2d, d_bloom, d_nb_flt, R);
@@ -510,9 +488,30 @@ void search_bang_engineered(
     }
   }
 
-  // ── Stage 3: Exact rerank（等 streamFP 同步，full vectors 已到 GPU）────────
-  // 对应 BANG: cudaStreamSynchronize(streamFPTransfers) 后 compute_L2Dist
-  CUDA_CHECK(cudaStreamSynchronize(streamFP));
+  // ── Stage 3: Exact rerank ─────────────────────────────────────────────────
+  // Build cand_vecs from the FINAL worklist after all iterations complete.
+  // Must be done here (not inside the loop) because merge_worklist_kernel
+  // reorders d_wl_ids after we snapshot h_wl_ids, making loop-time uploads
+  // misaligned with the final d_wl_ids → wrong distances → zero recall.
+  CUDA_CHECK(cudaStreamSynchronize(streamKernels));
+  {
+    std::vector<int> h_wl_ids_final(numQ * kL);
+    CUDA_CHECK(cudaMemcpy(h_wl_ids_final.data(), d_wl_ids,
+                          numQ * kL * sizeof(int), cudaMemcpyDeviceToHost));
+    for (int q = 0; q < numQ; q++)
+      for (int i = 0; i < kL; i++) {
+        int cid = h_wl_ids_final[q * kL + i];
+        float* dst = h_cand_vecs + ((long long)q * kL + i) * dim;
+        if (cid >= 0 && cid < N)
+          std::copy(graph.vecs.begin() + (long long)cid * dim,
+                    graph.vecs.begin() + (long long)cid * dim + dim, dst);
+        else
+          std::fill(dst, dst + dim, 0.f);
+      }
+    CUDA_CHECK(cudaMemcpy(d_cand_vecs, h_cand_vecs,
+                          (long long)numQ * kL * dim * sizeof(float),
+                          cudaMemcpyHostToDevice));
+  }
   size_t rerank_shm = kL * (sizeof(float) + sizeof(int));
   exact_rerank_eng_kernel<<<numQ, kL, rerank_shm, streamKernels>>>(
       d_queries, d_cand_vecs, d_wl_ids, d_out_ids, d_out_dists, dim);
