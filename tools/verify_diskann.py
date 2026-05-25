@@ -74,14 +74,37 @@ if __name__ == "__main__":
     index_prefix = os.path.basename(args.index)
 
     print(f"Loading DiskANN index {args.index} ...", flush=True)
-    idx = diskannpy.StaticMemoryIndex(
-        data_type="float",
-        distance_metric="l2",
-        index_directory=index_dir,
-        index_prefix=index_prefix,
-        num_threads=1,
-        initial_search_complexity=args.L,
-    )
+    import inspect
+    sig = inspect.signature(diskannpy.StaticMemoryIndex.__init__)
+    print(f"StaticMemoryIndex signature: {sig}", flush=True)
+
+    # Try different API versions
+    try:
+        idx = diskannpy.StaticMemoryIndex(
+            index_directory=index_dir,
+            index_prefix=index_prefix,
+            num_threads=1,
+            initial_search_complexity=args.L,
+        )
+    except TypeError:
+        try:
+            idx = diskannpy.StaticMemoryIndex(
+                data_type="float",
+                distance_metric="l2",
+                index_directory=index_dir,
+                index_prefix=index_prefix,
+                num_threads=1,
+                initial_search_complexity=args.L,
+            )
+        except TypeError:
+            idx = diskannpy.StaticMemoryIndex(
+                vector_dtype=np.float32,
+                distance_metric="l2",
+                index_directory=index_dir,
+                index_prefix=index_prefix,
+                num_threads=1,
+                initial_search_complexity=args.L,
+            )
 
     print(f"Searching L={args.L} ...", flush=True)
     ids, _ = idx.search(query_data=queries, k_neighbors=args.k, complexity=args.L)
