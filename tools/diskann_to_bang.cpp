@@ -98,10 +98,12 @@ int main(int argc, char** argv)
 
   uint64_t index_size = 0;
   uint32_t max_degree = 0;
+  uint32_t diskann_entry_point = 0;
   std::fread(&index_size, sizeof(uint64_t), 1, fg);
   std::fread(&max_degree, sizeof(uint32_t), 1, fg);
-  std::fprintf(stderr, "[convert] DiskANN graph: index_size=%lu max_degree=%u\n",
-               (unsigned long)index_size, max_degree);
+  std::fread(&diskann_entry_point, sizeof(uint32_t), 1, fg);  // DiskANN header has entry_point after max_degree
+  std::fprintf(stderr, "[convert] DiskANN graph: index_size=%lu max_degree=%u entry_point=%u\n",
+               (unsigned long)index_size, max_degree, diskann_entry_point);
 
   // Read all adjacency lists
   std::vector<std::vector<uint32_t>> adj_lists;
@@ -129,9 +131,12 @@ int main(int argc, char** argv)
   int N_use = std::min(N, N_graph);
   std::fprintf(stderr, "[convert] N=%d dim=%d N_use=%d\n", N, dim, N_use);
 
-  // ── Compute medoid ──────────────────────────────────────────────────────────
-  std::fprintf(stderr, "[convert] Computing medoid ...\n");
-  int medoid = compute_medoid(vecs, N_use, dim);
+  // Use DiskANN's entry_point as medoid (it is the centroid-nearest node DiskANN computed)
+  int medoid = (int)diskann_entry_point;
+  if (medoid < 0 || medoid >= N_use) {
+    std::fprintf(stderr, "[convert] entry_point=%d out of range, computing medoid from scratch...\n", medoid);
+    medoid = compute_medoid(vecs, N_use, dim);
+  }
   std::fprintf(stderr, "[convert] medoid=%d\n", medoid);
 
   // ── Write bang graph.bin ────────────────────────────────────────────────────
