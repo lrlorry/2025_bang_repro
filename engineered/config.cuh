@@ -9,7 +9,11 @@ constexpr int kR       = 16;     // graph degree
 constexpr int kM       = 8;      // PQ chunks
 constexpr int kPQCents = 256;
 constexpr int kChunkDim = kDim / kM;
+#ifdef kL_OVERRIDE
+constexpr int kL       = kL_OVERRIDE;  // compile-time sweep: -DkL_OVERRIDE=32
+#else
 constexpr int kL       = 32;     // worklist length
+#endif
 constexpr int kTopK    = 10;
 constexpr int kBF      = 399887; // Bloom filter entries/query (BANG: BF_ENTRIES)
 constexpr int kMaxIter = 300;

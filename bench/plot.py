@@ -1,18 +1,22 @@
 """
 BANG Reproduction — 科研对比图生成脚本
-生成 3 张图：
+生成 3-4 张图：
   1. figures/recall_qps.png    — QPS vs Recall@10 （plain / engineered）
   2. figures/build_time.png    — 构建耗时对比
   3. figures/speedup.png       — engineered 各优化点加速比（基于文献数据）
+  4. figures/bang_vs_cagra.png — BANG vs CAGRA QPS vs Recall（SIFT1M）
 
 用法：
   python3 bench/plot.py                        # 从 results/ 读取实测数据
   python3 bench/plot.py --demo                 # 使用内置 demo 数据直接绘图
+  python3 bench/plot.py --cagra-compare        # 增加 BANG vs CAGRA 对比图
+  python3 bench/plot.py --demo --cagra-compare # demo + CAGRA 对比
 """
 import argparse
 import os
 import re
 import sys
+import csv
 
 import matplotlib
 matplotlib.use("Agg")
@@ -46,6 +50,9 @@ COLORS = {
     "plain":       "#4878CF",
     "engineered":  "#E84646",
     "bang_paper":  "#6ACC65",
+    "bang":        "#E84646",
+    "cagra":       "#4878CF",
+    "cuvs":        "#6ACC65",
 }
 
 # ── 从 results/ 解析数据 ──────────────────────────────────────────────────────
@@ -222,11 +229,72 @@ def plot_speedup(search_plain, search_eng, out_path):
     print(f"Saved: {out_path}")
 
 
+# ── CAGRA comparison data loader ──────────────────────────────────────────────
+def load_sweep_csv(path, x_col, y_col):
+    """Read a CSV and return (x_values, y_values) for the given column names."""
+    if not os.path.exists(path):
+        return None, None
+    xs, ys = [], []
+    with open(path) as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                xs.append(float(row[x_col]))
+                ys.append(float(row[y_col]))
+            except (KeyError, ValueError):
+                pass
+    return xs, ys
+
+
+# ── 图 4：BANG vs CAGRA QPS vs Recall（SIFT1M） ────────────────────────────
+def plot_bang_vs_cagra(bang_sweep_path, cagra_sweep_path, cuvs_sweep_path, out_path):
+    fig, ax = plt.subplots(figsize=(7, 5))
+
+    # BANG reproduction
+    bang_recall, bang_qps = load_sweep_csv(bang_sweep_path, "recall", "qps")
+    if bang_recall:
+        ax.plot(bang_recall, bang_qps, "s-", color=COLORS["bang"],
+                lw=2, ms=7, label="BANG repro (engineered)")
+        for r, q in zip(bang_recall, bang_qps):
+            ax.annotate(f"L≈{r:.2f}", (r, q),
+                        textcoords="offset points", xytext=(4, 4),
+                        fontsize=8, color=COLORS["bang"])
+
+    # CAGRA (from 2024_cagra_repro)
+    cagra_recall, cagra_qps = load_sweep_csv(cagra_sweep_path, "recall", "qps")
+    if cagra_recall:
+        ax.plot(cagra_recall, cagra_qps, "o-", color=COLORS["cagra"],
+                lw=2, ms=7, label="CAGRA repro")
+
+    # cuVS (optional)
+    cuvs_recall, cuvs_qps = load_sweep_csv(cuvs_sweep_path, "recall", "qps")
+    if cuvs_recall:
+        ax.plot(cuvs_recall, cuvs_qps, "^-", color=COLORS["cuvs"],
+                lw=2, ms=7, label="cuVS")
+
+    if not bang_recall and not cagra_recall:
+        ax.text(0.5, 0.5, "No data — run bench/bench.sh first",
+                ha="center", va="center", transform=ax.transAxes, fontsize=12)
+
+    ax.set_xlabel("Recall@10")
+    ax.set_ylabel("QPS (queries / second)")
+    ax.set_title("BANG vs CAGRA: QPS vs Recall@10\n(SIFT1M, GPU search)")
+    ax.legend(loc="upper left")
+    ax.set_xlim(0.0, 1.05)
+    ax.set_ylim(0)
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
 # ── main ─────────────────────────────────────────────────────────────────────
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--demo", action="store_true",
                         help="使用内置 demo 数据绘图（不需要实测结果）")
+    parser.add_argument("--cagra-compare", action="store_true",
+                        help="生成 BANG vs CAGRA 对比图（需要 results/bang_sweep.csv）")
     args = parser.parse_args()
 
     if args.demo:
@@ -270,6 +338,15 @@ def main():
                     os.path.join(FIGURES_DIR, "build_time.png"))
     plot_speedup(search_p, search_e,
                  os.path.join(FIGURES_DIR, "speedup.png"))
+
+    if args.cagra_compare:
+        cagra_repro = os.path.join(ROOT, "..", "2024_cagra_repro")
+        plot_bang_vs_cagra(
+            bang_sweep_path  = os.path.join(RESULTS_DIR, "bang_sweep.csv"),
+            cagra_sweep_path = os.path.join(cagra_repro, "cagra_sweep.csv"),
+            cuvs_sweep_path  = os.path.join(cagra_repro, "cuvs_sweep.csv"),
+            out_path         = os.path.join(FIGURES_DIR, "bang_vs_cagra.png"),
+        )
 
     print(f"\n所有图表已保存到 {FIGURES_DIR}/")
 

@@ -31,3 +31,16 @@ cuda_add_executable(bang_engineered
   OPTIONS -Xcompiler=-fopenmp
 )
 target_link_libraries(bang_engineered ${CUDA_LIBRARIES} -fopenmp)
+
+# ── bang_bench: SIFT1M benchmark，sweeping kL at compile time ────────────────
+# Each binary outputs one CSV line: L,recall,qps,search_ms
+# Used by bench/bench.sh to collect results/bang_sweep.csv
+foreach(kL_VAL 16 32 48 64)
+  cuda_add_executable(bang_bench_L${kL_VAL}
+    bench/bang_bench.cu
+    engineered/engineered_build.cu
+    engineered/engineered_search.cu
+    OPTIONS -DkL_OVERRIDE=${kL_VAL} -Xcompiler=-fopenmp
+  )
+  target_link_libraries(bang_bench_L${kL_VAL} ${CUDA_LIBRARIES} -fopenmp)
+endforeach()

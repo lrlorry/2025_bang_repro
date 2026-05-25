@@ -16,7 +16,11 @@ constexpr int kPQCents = 256;    // centroids per chunk（BANG 固定 256）
 constexpr int kChunkDim = kDim / kM;  // 每个 chunk 的维度
 
 // ── 搜索参数 ─────────────────────────────────────────────────────────────────
+#ifdef kL_OVERRIDE
+constexpr int kL       = kL_OVERRIDE;  // compile-time sweep: -DkL_OVERRIDE=32
+#else
 constexpr int kL       = 32;     // worklist length（BANG: worklist_length）
+#endif
 constexpr int kTopK    = 10;     // 最终输出 top-k
 constexpr int kBF      = 399887; // Bloom filter entries/query（BANG: BF_ENTRIES）
 constexpr int kMaxIter = 300;    // 最大迭代轮数
