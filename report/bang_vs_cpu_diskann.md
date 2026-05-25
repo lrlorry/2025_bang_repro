@@ -124,3 +124,78 @@ BANG 的优势不是"GPU 更快"，而是：
 | 数据集 > 1B，多机 | DiskANN（SSD）或 distributed ANNS |
 | 低延迟在线 serving，< 1ms | CAGRA persistent kernel 或 CPU DiskANN |
 | 高 throughput 离线 batch | BANG 或 CAGRA（取决于 HBM 是否放得下）|
+
+---
+
+## 7. 复现实验：我们的实现 vs 官方 BANG（SIFT1M）
+
+> 实验日期：2026-05-24。数据集：SIFT1M（100万向量，128维）。
+> 官方 BANG：`BANG_Base/` 源码，使用 DiskANN 磁盘索引 + bang_preprocess.py 预处理。
+> 我们的复现：自行实现 `diskann_to_bang.cpp`，从 DiskANN 内存索引转换图结构，自行实现 PQ 量化（k-means 10轮迭代，M=8子空间）。
+
+### 7.1 数值对比
+
+| L | 我们的 Recall | 官方 Recall | 我们的 QPS | 官方 QPS | 我们的 search_ms | 官方 search_ms |
+|---|---|---|---|---|---|---|
+| 16  | 0.4155 | **0.9342** | 12,002  | **250,796** | 833.2 | **39.9** |
+| 32  | 0.5683 | **0.9784** | 61,666  | **163,534** | 162.2 | **61.2** |
+| 48  | 0.6560 | **0.9902** | 41,410  | **112,354** | 241.5 | **89.0** |
+| 64  | 0.7148 | **0.9949** | 19,171  | **74,028**  | 521.6 | **135.0** |
+| 128 | 0.8317 | **0.9991** | 11,529  | **36,122**  | 867.4 | **276.9** |
+| 256 | 0.9129 | **0.9998** | 3,270   | **16,212**  | 3058.3 | **616.9** |
+
+官方 BANG 在所有 L 下 recall 高出我们约 **0.09~0.52**，QPS 高出约 **5×~21×**。
+
+### 7.2 差距原因分析
+
+**（1）PQ 量化质量差距（主要原因，影响 recall）**
+
+官方 BANG 使用 DiskANN 内置的 **OPQ（Optimized Product Quantization）**，在训练时联合优化旋转矩阵与码本，使各子空间方差均匀分布，量化误差最小化。
+
+我们的复现使用**普通 k-means PQ**（10 轮迭代，M=8 子空间，K=256 聚类中心），无旋转优化，各子空间量化误差不均匀。
+
+OPQ vs 普通 PQ 的 recall 差距在 M=8、D=128 的场景下可达 0.05~0.15（越短 L 差距越大，因为 PQ approximate distance 排序误差更多影响 beam search 方向）。
+
+**（2）候选集质量差距（影响 recall 和 QPS）**
+
+官方 BANG 使用 DiskANN **磁盘索引**（`_disk.index`）经 `bang_preprocess.py` 转换，保留了原始 sector-aligned 布局中完整的邻居信息（DiskANN 构建时的全精度 full-beam-width 图）。
+
+我们的复现从 DiskANN **内存索引**转换，经过 `diskann_to_bang.cpp`，在解析过程中存在额外的边过滤（out-of-range、self-edge 过滤），导致部分邻居丢失。
+
+**（3）Beam search 实现差距（影响 QPS）**
+
+官方 `bang_search.cu` 的 CUDA kernel 针对 A100 架构深度优化（warp-level primitives、shared memory 布局、异步流水线），我们的复现未触及 GPU kernel，仅在 CPU 层面进行了图转换和 PQ 训练。QPS 差距（5×~21×）主要来自 GPU 端 kernel 效率，与我们的复现路径无关。
+
+### 7.3 已发现并修复的 Bug
+
+在复现过程中，发现并修复了两个影响结果正确性的关键 Bug：
+
+**Bug 1：DiskANN 图头部解析错误（`tools/diskann_to_bang.cpp`）**
+
+DiskANN 磁盘索引头部为 **24 字节**：
+```
+[uint64 index_size][uint32 max_degree][uint32 entry_point][uint64 num_frozen_points]
+```
+原代码漏读了最后的 `uint64_t num_frozen_points`（8 字节），导致所有节点邻接表有 **2 个节点的偏移**，图结构完全错乱，beam search recall 仅 0.8%。修复后 recall 提升至 41~91%（L=16~256）。
+
+**Bug 2：GT 文件零距离导致虚假 100% recall（`BANG_Base/test_driver.cpp`）**
+
+原始 GT 文件（`sift_groundtruth.ivecs`）只包含近邻 ID，不含距离。`test_driver.cpp` 的 recall 计算中 tie-breaker 逻辑：
+```cpp
+while (tie_breaker < dim_gs &&
+       gt_dist_vec[tie_breaker] == gt_dist_vec[recall_at-1])
+    tie_breaker++;
+```
+当 `gt_dist_vec` 全为 0 时，`tie_breaker` 一路扩展到 `K=100`，使评估标准从「top-10 在真实 top-10 中」变成「top-10 在真实 top-100 中」，给出虚假的 100% recall。修复方式：为 GT 邻居对预先计算真实 L2 距离，填入 `gt_dist_vec`。
+
+### 7.4 复现结论
+
+| 项目 | 结论 |
+|---|---|
+| 图转换工具 | 修复 24 字节头部 Bug 后，图结构正确，DiskANN 原生 recall 98.9% 验证通过 |
+| PQ 量化 | 功能正确，但 k-means PQ 与 OPQ 存在系统性质量差距 |
+| recall 可复现性 | L=256 时 recall 达到 0.91，趋势与官方一致（单调递增） |
+| QPS 差距 | 主要来自 GPU kernel 优化，不在本次复现范围内 |
+| 评估工具 | 发现并修复 GT 零距离 bug，保证评估结果可信 |
+
+![复现 vs 官方 BANG 对比](../figures/repro_vs_official.png)

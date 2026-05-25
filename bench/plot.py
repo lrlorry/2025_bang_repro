@@ -246,6 +246,38 @@ def load_sweep_csv(path, x_col, y_col):
     return xs, ys
 
 
+# ── 图 4b：我们的复现 vs 官方 BANG（SIFT1M） ─────────────────────────────────
+def plot_repro_vs_official(repro_path, official_path, out_path):
+    fig, ax = plt.subplots(figsize=(7, 5))
+
+    repro_r, repro_q = load_sweep_csv(repro_path,    "recall", "qps")
+    off_r,   off_q   = load_sweep_csv(official_path, "recall", "qps")
+
+    if repro_r:
+        ax.plot(repro_r, repro_q, "s-", color=COLORS["engineered"],
+                lw=2, ms=7, label="Our repro (engineered, memory index)")
+        for r, q in zip(repro_r, repro_q):
+            ax.annotate(f"{r:.2f}", (r, q), textcoords="offset points",
+                        xytext=(4, 4), fontsize=8, color=COLORS["engineered"])
+    if off_r:
+        ax.plot(off_r, off_q, "o-", color=COLORS["bang_paper"],
+                lw=2, ms=7, label="Official BANG (disk index, exact rerank)")
+        for r, q in zip(off_r, off_q):
+            ax.annotate(f"{r:.2f}", (r, q), textcoords="offset points",
+                        xytext=(4, -12), fontsize=8, color=COLORS["bang_paper"])
+
+    ax.set_xlabel("Recall@10")
+    ax.set_ylabel("QPS (queries / second)")
+    ax.set_title("Our Repro vs Official BANG: QPS vs Recall@10\n(SIFT1M, N=1M, dim=128)")
+    ax.legend(loc="upper left")
+    ax.set_xlim(0.3, 1.05)
+    ax.set_ylim(0)
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
 # ── 图 4：BANG vs CAGRA QPS vs Recall（SIFT1M） ────────────────────────────
 def plot_bang_vs_cagra(bang_sweep_path, cagra_sweep_path, cuvs_sweep_path, out_path):
     fig, ax = plt.subplots(figsize=(7, 5))
@@ -338,6 +370,12 @@ def main():
                     os.path.join(FIGURES_DIR, "build_time.png"))
     plot_speedup(search_p, search_e,
                  os.path.join(FIGURES_DIR, "speedup.png"))
+
+    plot_repro_vs_official(
+        repro_path    = os.path.join(RESULTS_DIR, "bang_sweep.csv"),
+        official_path = os.path.join(RESULTS_DIR, "bang_official_sweep.csv"),
+        out_path      = os.path.join(FIGURES_DIR, "repro_vs_official.png"),
+    )
 
     if args.cagra_compare:
         cagra_repro = os.path.join(ROOT, "..", "2024_cagra_repro")
