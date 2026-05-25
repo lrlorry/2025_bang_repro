@@ -107,7 +107,14 @@ if __name__ == "__main__":
             )
 
     print(f"Searching L={args.L} ...", flush=True)
-    ids, _ = idx.search(query_data=queries, k_neighbors=args.k, complexity=args.L)
+    # Try different search API versions
+    try:
+        ids, _ = idx.batch_search(queries, k_neighbors=args.k, complexity=args.L, num_threads=1)
+    except (TypeError, AttributeError):
+        try:
+            ids, _ = idx.search(queries, k_neighbors=args.k, complexity=args.L)
+        except TypeError:
+            ids, _ = idx.search(queries, args.k, args.L)
 
     recall = compute_recall(ids, gt, args.k)
     print(f"\nDiskANN own search: Recall@{args.k} = {recall:.4f}  (L={args.L}, numQ={args.numq})")
