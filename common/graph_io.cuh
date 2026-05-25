@@ -30,7 +30,7 @@ static bang_repro::plain::HostGraph load_graph(const char* path)
   if (std::fread(hdr, sizeof(int), 4, f) != 4) {
     std::fprintf(stderr, "Corrupt graph header in %s\n", path); std::exit(1);
   }
-  int N = hdr[0], /*dim=*/hdr[1], R = hdr[2], medoid = hdr[3];
+  int N = hdr[0], R = hdr[2], medoid = hdr[3];
   bang_repro::plain::HostGraph g;
   g.N = N; g.R = R; g.medoid = medoid;
   g.adj.resize((long long)N * R);
