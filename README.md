@@ -249,5 +249,4 @@ python3 plot.py
 
 - BANG paper: *Billion-scale Approximate Nearest Neighbor Search on GPU* (IEEE TBD 2025)  
 - DiskANN / Vamana: Jayaram et al., NeurIPS 2019  
-- CAGRA: Ootomo et al., IPDPS 2023  
-- 相关复现: [2024_cagra_repro](../2024_cagra_repro)
+- CAGRA: Ootomo et al., IPDPS 2023
