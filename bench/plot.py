@@ -21,7 +21,6 @@ import csv
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 import numpy as np
 
 # ── 路径 ─────────────────────────────────────────────────────────────────────
@@ -53,6 +52,7 @@ COLORS = {
     "bang":        "#E84646",
     "cagra":       "#4878CF",
     "cuvs":        "#6ACC65",
+    "official":    "#8B5CF6",
 }
 
 # ── 从 results/ 解析数据 ──────────────────────────────────────────────────────
@@ -135,18 +135,17 @@ DEMO_DATA = {
 }
 
 # ── 图 1：QPS vs Recall@10 ────────────────────────────────────────────────────
-def plot_recall_qps(plain_pts, eng_pts, out_path):
-    fig, ax = plt.subplots(figsize=(6.5, 4.5))
+def plot_recall_qps(plain_pts, eng_pts, out_path, official_pts=None):
+    fig, ax = plt.subplots(figsize=(7, 5))
 
     pr  = [p[1] for p in plain_pts]
     pq  = [p[2] for p in plain_pts]
     er  = [p[1] for p in eng_pts]
     eq  = [p[2] for p in eng_pts]
 
-    ax.plot(pr, pq, "o-", color=COLORS["plain"],      lw=2, ms=7, label="plain (reference)")
-    ax.plot(er, eq, "s-", color=COLORS["engineered"],  lw=2, ms=7, label="engineered")
+    ax.plot(pr, pq, "o-", color=COLORS["plain"],      lw=2, ms=7, label="plain (ours, N=8192)")
+    ax.plot(er, eq, "s-", color=COLORS["engineered"],  lw=2, ms=7, label="engineered (ours, N=8192)")
 
-    # 标注 L 值
     for (L, r, q) in plain_pts:
         ax.annotate(f"L={L}", (r, q), textcoords="offset points", xytext=(4, 4),
                     fontsize=9, color=COLORS["plain"])
@@ -154,11 +153,20 @@ def plot_recall_qps(plain_pts, eng_pts, out_path):
         ax.annotate(f"L={L}", (r, q), textcoords="offset points", xytext=(4, -12),
                     fontsize=9, color=COLORS["engineered"])
 
+    if official_pts:
+        off_r = [p[0] for p in official_pts]
+        off_q = [p[1] for p in official_pts]
+        ax.plot(off_r, off_q, "^-", color=COLORS["official"], lw=2, ms=7,
+                label="Official BANG source (SIFT1M, disk index)")
+        for L_val, (r, q) in zip([16, 32, 48, 64, 128, 256], official_pts):
+            ax.annotate(f"L={L_val}", (r, q), textcoords="offset points", xytext=(4, 4),
+                        fontsize=9, color=COLORS["official"])
+
     ax.set_xlabel("Recall@10")
     ax.set_ylabel("QPS (queries / second)")
-    ax.set_title("BANG Reproduction: QPS vs Recall@10\n(N=8192, dim=128, random Gaussian)")
+    ax.set_title("BANG: QPS vs Recall@10\n(ours: N=8192 random Gaussian; official: SIFT1M N=1M)")
     ax.legend(loc="upper left")
-    ax.set_xlim(0.45, 1.0)
+    ax.set_xlim(0.3, 1.05)
     ax.set_ylim(0)
     fig.tight_layout()
     fig.savefig(out_path)
@@ -279,18 +287,28 @@ def plot_repro_vs_official(repro_path, official_path, out_path):
 
 
 # ── 图 4：BANG vs CAGRA QPS vs Recall（SIFT1M） ────────────────────────────
-def plot_bang_vs_cagra(bang_sweep_path, cagra_sweep_path, cuvs_sweep_path, out_path):
+def plot_bang_vs_cagra(bang_sweep_path, official_sweep_path, cagra_sweep_path, cuvs_sweep_path, out_path):
     fig, ax = plt.subplots(figsize=(7, 5))
 
-    # BANG reproduction
+    # BANG reproduction (our impl, SIFT1M)
     bang_recall, bang_qps = load_sweep_csv(bang_sweep_path, "recall", "qps")
     if bang_recall:
         ax.plot(bang_recall, bang_qps, "s-", color=COLORS["bang"],
-                lw=2, ms=7, label="BANG repro (engineered)")
+                lw=2, ms=7, label="BANG repro (ours, SIFT1M)")
         for r, q in zip(bang_recall, bang_qps):
-            ax.annotate(f"L≈{r:.2f}", (r, q),
+            ax.annotate(f"{r:.2f}", (r, q),
                         textcoords="offset points", xytext=(4, 4),
                         fontsize=8, color=COLORS["bang"])
+
+    # Official BANG source (SIFT1M)
+    off_recall, off_qps = load_sweep_csv(official_sweep_path, "recall", "qps")
+    if off_recall:
+        ax.plot(off_recall, off_qps, "^-", color=COLORS["official"],
+                lw=2, ms=7, label="Official BANG source (SIFT1M, disk index)")
+        for r, q in zip(off_recall, off_qps):
+            ax.annotate(f"{r:.2f}", (r, q),
+                        textcoords="offset points", xytext=(4, -12),
+                        fontsize=8, color=COLORS["official"])
 
     # CAGRA (from 2024_cagra_repro)
     cagra_recall, cagra_qps = load_sweep_csv(cagra_sweep_path, "recall", "qps")
@@ -301,10 +319,10 @@ def plot_bang_vs_cagra(bang_sweep_path, cagra_sweep_path, cuvs_sweep_path, out_p
     # cuVS (optional)
     cuvs_recall, cuvs_qps = load_sweep_csv(cuvs_sweep_path, "recall", "qps")
     if cuvs_recall:
-        ax.plot(cuvs_recall, cuvs_qps, "^-", color=COLORS["cuvs"],
+        ax.plot(cuvs_recall, cuvs_qps, "D-", color=COLORS["cuvs"],
                 lw=2, ms=7, label="cuVS")
 
-    if not bang_recall and not cagra_recall:
+    if not bang_recall and not off_recall and not cagra_recall:
         ax.text(0.5, 0.5, "No data — run bench/bench.sh first",
                 ha="center", va="center", transform=ax.transAxes, fontsize=12)
 
@@ -312,7 +330,7 @@ def plot_bang_vs_cagra(bang_sweep_path, cagra_sweep_path, cuvs_sweep_path, out_p
     ax.set_ylabel("QPS (queries / second)")
     ax.set_title("BANG vs CAGRA: QPS vs Recall@10\n(SIFT1M, GPU search)")
     ax.legend(loc="upper left")
-    ax.set_xlim(0.0, 1.05)
+    ax.set_xlim(0.3, 1.05)
     ax.set_ylim(0)
     fig.tight_layout()
     fig.savefig(out_path)
@@ -364,8 +382,14 @@ def main():
         print(f"[measured] plain:  recall={recall_p:.3f}  total={plain_res['total_ms']}ms")
         print(f"[measured] eng:    recall={recall_e:.3f}  total={eng_res['total_ms']}ms")
 
+    # load official BANG sweep for overlay
+    official_csv = os.path.join(RESULTS_DIR, "bang_official_sweep.csv")
+    off_r, off_q = load_sweep_csv(official_csv, "recall", "qps")
+    official_pts = list(zip(off_r, off_q)) if off_r else None
+
     plot_recall_qps(plain_pts, eng_pts,
-                    os.path.join(FIGURES_DIR, "recall_qps.png"))
+                    os.path.join(FIGURES_DIR, "recall_qps.png"),
+                    official_pts=official_pts)
     plot_build_time(build_p, build_e,
                     os.path.join(FIGURES_DIR, "build_time.png"))
     plot_speedup(search_p, search_e,
@@ -373,17 +397,18 @@ def main():
 
     plot_repro_vs_official(
         repro_path    = os.path.join(RESULTS_DIR, "sift1m_results.csv"),
-        official_path = os.path.join(RESULTS_DIR, "bang_official_sweep.csv"),
+        official_path = official_csv,
         out_path      = os.path.join(FIGURES_DIR, "repro_vs_official.png"),
     )
 
     if args.cagra_compare:
         cagra_repro = os.path.join(ROOT, "..", "2024_cagra_repro")
         plot_bang_vs_cagra(
-            bang_sweep_path  = os.path.join(RESULTS_DIR, "bang_sweep.csv"),
-            cagra_sweep_path = os.path.join(cagra_repro, "cagra_sweep.csv"),
-            cuvs_sweep_path  = os.path.join(cagra_repro, "cuvs_sweep.csv"),
-            out_path         = os.path.join(FIGURES_DIR, "bang_vs_cagra.png"),
+            bang_sweep_path     = os.path.join(RESULTS_DIR, "sift1m_results.csv"),
+            official_sweep_path = official_csv,
+            cagra_sweep_path    = os.path.join(cagra_repro, "cagra_sweep.csv"),
+            cuvs_sweep_path     = os.path.join(cagra_repro, "cuvs_sweep.csv"),
+            out_path            = os.path.join(FIGURES_DIR, "bang_vs_cagra.png"),
         )
 
     print(f"\n所有图表已保存到 {FIGURES_DIR}/")
