@@ -361,12 +361,11 @@ def main():
     plot_speedup(search_p, search_e,
                  os.path.join(FIGURES_DIR, "speedup.png"))
 
-    cagra_repro = os.path.join(ROOT, "..", "2024_cagra_repro")
     plot_bang_vs_cagra(
         bang_sweep_path     = os.path.join(RESULTS_DIR, "sift1m_results.csv"),
         official_sweep_path = official_csv,
-        cagra_sweep_path    = os.path.join(cagra_repro, "cagra_sweep.csv"),
-        cuvs_sweep_path     = os.path.join(cagra_repro, "cuvs_sweep.csv"),
+        cagra_sweep_path    = os.path.join(RESULTS_DIR, "cagra_sift1m_sweep.csv"),
+        cuvs_sweep_path     = os.path.join(RESULTS_DIR, "cuvs_sift1m_sweep.csv"),
         out_path            = os.path.join(FIGURES_DIR, "bang_vs_cagra.png"),
     )
 
